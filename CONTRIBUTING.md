@@ -25,6 +25,8 @@ pnpm run install:global        # build, pack and install as the global `sich`
   `SICH_BIN=$PWD/dist/cli.js git commit …`
 - `pnpm test` rebuilds and runs the suite (with `bun test`) against
   `dist/cli.js`; `pnpm run typecheck` checks types.
+- `pnpm run docs:example` regenerates [docs/example.md](docs/example.md) from a
+  real run; do it whenever user-facing output changes.
 
 ## Tests
 

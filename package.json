@@ -34,6 +34,7 @@
   "scripts": {
     "build": "bun build src/cli.ts --target node --outfile dist/cli.js --define SICH_DEV=${SICH_DEV:-false} && chmod +x dist/cli.js",
     "install:global": "sh scripts/install-global.sh",
+    "docs:example": "pnpm run build && sh scripts/make-example.sh > docs/example.md",
     "prepublishOnly": "pnpm run typecheck && SICH_DEV=false pnpm test && SICH_DEV=false pnpm run build",
     "test": "pnpm run build && bun test",
     "typecheck": "tsc --noEmit"

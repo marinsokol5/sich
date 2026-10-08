@@ -50,6 +50,9 @@ git clone git@github.com:user/myproject.git && cd myproject
 sich attach team git@github.com:user/myproject-team.git
 ```
 
+For a full walkthrough with real output, the resulting files and every file sich
+generates, see **[docs/example.md](docs/example.md)**.
+
 ## CLI
 
 ```
