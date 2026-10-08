@@ -15,7 +15,7 @@ Works with GitHub out of the box: every new layer can automatically become a new
 Plain `git` commands only ever see **base** files. Files from other layers never appear in the
 **base** repo: not in commits, not in `.gitignore`. Other contributors never even know that `sich` is in use or that the other repositories exist; everything works for them as usual.
 
-**The name** is a shortened (easier-to-type) version of *sietch*, the hidden cave communities of the Fremen in Frank Herbert's *Dune*, where only the tribe knows the way in. Such are the layers of `sich`: only visible to those with access to them.
+**The name** is a shortened (easier-to-type) version of *sietch*, the hidden cave communities of the Fremen in Frank Herbert's *Dune*, where only the tribe knows the way in. Such are the layers of `sich`: only visible to those with access to them. It's pronounced like *sietch* ("seech").
 
 ## Why
 
