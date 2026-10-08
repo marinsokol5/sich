@@ -110,6 +110,8 @@ Claims can't nest across layers.
 ## How it works
 
 It's plain git all the way down; `sich` is a tiny wrapper on top.
+To see every file it generates for a real project, look at
+[section 4 of the example](docs/example.md#4-the-files-sich-generates).
 
 **Layers.** Layer `L` is a regular, non-bare git dir at `.sich/L/` with
 `core.worktree = ../..`, so its working tree is the project root. sich always
