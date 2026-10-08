@@ -1,0 +1,573 @@
+// Integration tests: run the CLI as a subprocess against temp repos with local bare remotes.
+
+import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname, join } from "node:path";
+import pkg from "../package.json";
+import { CLI, managedBlock, Sandbox, statusPaths } from "./helpers";
+
+setDefaultTimeout(60_000);
+
+let sb: Sandbox;
+beforeEach(() => {
+  sb = new Sandbox();
+});
+afterEach(() => {
+  sb.cleanup();
+});
+
+const baseStatus = (root: string) => statusPaths(sb.git(root, "status", "--porcelain", "-uall"));
+const layerStatus = (root: string, layer: string) =>
+  statusPaths(sb.layerGit(root, layer, "status", "--porcelain", "-uall"));
+const layerFiles = (root: string, layer: string) =>
+  sb.layerGit(root, layer, "ls-files").split("\n").filter(Boolean).sort();
+/** Exit code of `git check-ignore -q` (0 = ignored). */
+const ignoredIn = (root: string, layer: string | null, path: string) => {
+  const repoArgs = layer ? [`--git-dir=${join(root, ".sich", layer)}`, `--work-tree=${root}`] : [];
+  return sb.run(["git", ...repoArgs, "check-ignore", "-q", path], root).code === 0;
+};
+
+/** Base repo with sich initialized and the given layers created. */
+function setup(...layers: string[]): string {
+  const root = sb.repo("proj");
+  sb.ok(root, "init");
+  for (const l of layers) sb.ok(root, "new", l);
+  return root;
+}
+
+describe("1. init", () => {
+  test("is idempotent, installs the hook, preserves user excludes", () => {
+    const root = sb.repo("proj");
+    sb.write(root, ".git/info/exclude", "# mine\n*.tmp\n");
+    const first = sb.ok(root, "init");
+    expect(first).toContain("installed pre-commit hook");
+    const hook = join(root, ".git/hooks/pre-commit");
+    expect(readFileSync(hook, "utf8")).toContain('exec "$sich" check --staged');
+    expect(statSync(hook).mode & 0o111).not.toBe(0);
+
+    const second = sb.ok(root, "init");
+    expect(second).toContain("already initialized");
+    expect(second).not.toContain("installed");
+    const exclude = sb.read(root, ".git/info/exclude");
+    expect(exclude.startsWith("# mine\n*.tmp\n")).toBe(true);
+    expect(exclude.split("# >>> sich").length).toBe(2);
+    expect(managedBlock(exclude)).toEqual(["/.sich/"]);
+    expect(baseStatus(root)).toEqual([]);
+  });
+
+  test("does not overwrite an existing hook or a core.hooksPath setup", () => {
+    const root = sb.repo("proj");
+    sb.write(root, ".git/hooks/pre-commit", "#!/bin/sh\necho custom\n");
+    const out = sb.ok(root, "init");
+    expect(out).toContain("add this line");
+    expect(out).toContain("sich check --staged");
+    expect(sb.read(root, ".git/hooks/pre-commit")).toBe("#!/bin/sh\necho custom\n");
+
+    const other = sb.repo("other");
+    sb.git(other, "config", "core.hooksPath", ".githooks");
+    const out2 = sb.ok(other, "init");
+    expect(out2).toContain("core.hooksPath");
+    expect(existsSync(join(other, ".githooks/pre-commit"))).toBe(false);
+    expect(existsSync(join(other, ".git/hooks/pre-commit"))).toBe(false);
+  });
+});
+
+describe("2. claims hide files from base and show them in the layer", () => {
+  test("new + add file + add dir", () => {
+    const root = setup("notes");
+    expect(sb.read(root, ".sich/notes/config")).toMatch(/worktree = \.\.\/\.\./);
+    expect(sb.layerGit(root, "notes", "log", "--format=%s")).toBe("sich: create layer notes\n");
+
+    sb.write(root, "NOTES.md", "notes\n");
+    sb.write(root, "roadmap/q1.md", "q1\n");
+    sb.write(root, "src/app.ts", "code\n");
+    sb.ok(root, "add", "notes", "NOTES.md", "roadmap");
+
+    expect(sb.read(root, ".sich/notes.paths")).toContain("NOTES.md\nroadmap/\n");
+    expect(baseStatus(root)).toEqual(["src/app.ts"]);
+    expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "NOTES.md", "roadmap/q1.md"]);
+    expect(ignoredIn(root, null, "NOTES.md")).toBe(true);
+    expect(ignoredIn(root, "notes", "src/app.ts")).toBe(true);
+
+    // A new file inside a claimed directory belongs to the layer automatically.
+    sb.write(root, "roadmap/q2.md", "q2\n");
+    expect(baseStatus(root)).toEqual(["src/app.ts"]);
+    expect(layerStatus(root, "notes")).toContain("roadmap/q2.md");
+
+    // Paths are taken relative to the current directory.
+    sb.write(root, "src/private.md", "p\n");
+    sb.ok(join(root, "src"), "add", "notes", "private.md");
+    expect(sb.read(root, ".sich/notes.paths")).toContain("src/private.md\n");
+    expect(baseStatus(root)).toEqual(["src/app.ts"]);
+  });
+});
+
+describe("3. overlapping claims", () => {
+  test("claims sharing parent directories", () => {
+    const root = setup("notes");
+    for (const f of ["a/x.md", "a/y.md", "a/b/c.md", "a/b/z.md", "a/b/d/e.md", "a/b/d/f.md"]) sb.write(root, f, f);
+    sb.ok(root, "add", "notes", "a/b/c.md", "a/x.md", "a/b/d");
+    expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "a/b/c.md", "a/b/d/e.md", "a/b/d/f.md", "a/x.md"]);
+    expect(baseStatus(root)).toEqual(["a/b/z.md", "a/y.md"]);
+    sb.ok(root, "commit", "-m", "claims");
+    // Claiming a sibling later must not hide earlier ones.
+    sb.ok(root, "add", "notes", "a/y.md");
+    expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "a/y.md"]);
+    expect(baseStatus(root)).toEqual(["a/b/z.md"]);
+  });
+
+  test("nested claims across layers: most specific wins", () => {
+    const root = setup("notes", "keys");
+    sb.write(root, "docs/guide.md", "g\n");
+    sb.write(root, "docs/api.env", "KEY=1\n");
+    sb.write(root, "docs/deep/more.md", "m\n");
+    sb.ok(root, "add", "notes", "docs");
+    // notes now tracks docs/api.env, so keys must --move it.
+    expect(sb.bad(root, "add", "keys", "docs/api.env")).toContain("tracked by layer notes");
+    expect(sb.ok(root, "add", "keys", "docs/api.env", "--move")).toContain("moved docs/api.env from notes");
+
+    expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "docs/deep/more.md", "docs/guide.md"]);
+    expect(layerStatus(root, "keys")).toEqual([".sich/keys.paths", "docs/api.env"]);
+    expect(baseStatus(root)).toEqual([]);
+    expect(ignoredIn(root, "notes", "docs/api.env")).toBe(true);
+    expect(ignoredIn(root, "keys", "docs/guide.md")).toBe(true);
+    expect(ignoredIn(root, "keys", "docs/api.env")).toBe(false);
+    expect(sb.ok(root, "which", "docs/api.env").trim()).toBe("keys");
+    expect(sb.ok(root, "which", "docs/guide.md").trim()).toBe("notes");
+    expect(sb.ok(root, "which", "docs/later.md").trim()).toBe("notes (claimed, not yet committed)");
+    sb.ok(root, "commit", "-m", "both");
+    expect(sb.ok(root, "check")).toContain("ok");
+
+    // New files under docs/ go to notes, never to keys or base.
+    sb.write(root, "docs/new.md", "n\n");
+    expect(layerStatus(root, "notes")).toEqual(["docs/new.md"]);
+    expect(layerStatus(root, "keys")).toEqual([]);
+    expect(baseStatus(root)).toEqual([]);
+  });
+
+  test("an outer directory claim may be added around another layer's claim", () => {
+    const root = setup("notes", "keys");
+    sb.write(root, "docs/guide.md", "g\n");
+    sb.write(root, "docs/api.env", "KEY=1\n");
+    sb.ok(root, "add", "keys", "docs/api.env");
+    sb.ok(root, "commit", "-m", "keys");
+    sb.ok(root, "add", "notes", "docs");
+    expect(layerFiles(root, "notes")).toEqual([".sich/notes.paths", "docs/guide.md"]);
+    expect(layerStatus(root, "keys")).toEqual([]);
+  });
+});
+
+describe("4. moving paths out of base", () => {
+  test("add refuses a base-tracked path without --move; --move untracks it from base and warns", () => {
+    const root = setup("notes");
+    sb.write(root, "plan.md", "secret plan\n");
+    sb.git(root, "add", "plan.md");
+    sb.git(root, "commit", "-q", "-m", "oops");
+
+    const refused = sb.bad(root, "add", "notes", "plan.md");
+    expect(refused).toContain("tracked by base");
+    expect(sb.read(root, ".sich/notes.paths")).not.toContain("plan.md");
+
+    const r = sb.sich(root, ["add", "notes", "plan.md", "--move"]);
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain("warning");
+    expect(r.stderr).toContain("history");
+    expect(sb.git(root, "ls-files", "plan.md")).toBe("");
+    expect(sb.git(root, "status", "--porcelain")).toBe("D  plan.md\n");
+    expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "plan.md"]);
+    expect(sb.read(root, "plan.md")).toBe("secret plan\n");
+  });
+
+  test("add refuses a path claimed by another layer", () => {
+    const root = setup("notes", "keys");
+    sb.write(root, "x.md", "x\n");
+    sb.ok(root, "add", "notes", "x.md");
+    expect(sb.bad(root, "add", "keys", "x.md")).toContain("notes");
+    sb.ok(root, "add", "keys", "x.md", "--move");
+    expect(sb.read(root, ".sich/notes.paths")).not.toContain("x.md");
+    expect(layerFiles(root, "keys")).toContain("x.md");
+    expect(layerFiles(root, "notes")).not.toContain("x.md");
+  });
+});
+
+describe("5. gitignored files", () => {
+  test("a .gitignore'd .env can be claimed and committed by a layer", () => {
+    const root = setup("keys");
+    sb.write(root, ".gitignore", ".env\nnode_modules/\n");
+    sb.git(root, "add", ".gitignore");
+    sb.git(root, "commit", "-q", "-m", "ignore");
+    sb.write(root, ".env", "TOKEN=abc\n");
+    sb.write(root, "config/settings.json", "{}\n");
+    sb.write(root, "config/node_modules/junk.js", "junk\n");
+    expect(sb.ok(root, "which", ".env").trim()).toBe("ignored");
+
+    sb.ok(root, "add", "keys", ".env", "config");
+    expect(sb.ok(root, "commit", "-m", "secrets")).toContain("keys: committed");
+    expect(layerFiles(root, "keys")).toEqual([".env", ".sich/keys.paths", "config/settings.json"]);
+    expect(sb.ok(root, "which", ".env").trim()).toBe("keys");
+
+    sb.write(root, ".env", "TOKEN=changed\n");
+    expect(layerStatus(root, "keys")).toEqual([".env"]);
+    expect(sb.ok(root, "commit", "-m", "rotate")).toContain("keys: committed");
+  });
+});
+
+/** Base + notes + keys pushed to bare remotes; returns the remote paths. */
+function published() {
+  const baseRemote = sb.bare("proj.git");
+  const notesRemote = sb.bare("proj-notes.git");
+  const keysRemote = sb.bare("proj-keys.git");
+  const root = sb.repo("proj");
+  sb.git(root, "remote", "add", "origin", baseRemote);
+  sb.write(root, ".gitignore", ".env\n");
+  sb.git(root, "add", ".gitignore");
+  sb.git(root, "commit", "-q", "-m", "gitignore");
+  sb.ok(root, "init");
+  sb.ok(root, "new", "notes", "--remote", notesRemote);
+  sb.ok(root, "new", "keys", "--remote", keysRemote);
+  sb.write(root, "NOTES.md", "my notes\n");
+  sb.write(root, "roadmap/q1.md", "q1\n");
+  sb.write(root, "docs/guide.md", "guide\n");
+  sb.write(root, "docs/api.env", "KEY=1\n");
+  sb.write(root, ".env", "TOKEN=1\n");
+  sb.ok(root, "add", "keys", ".env", "docs/api.env");
+  sb.ok(root, "add", "notes", "NOTES.md", "roadmap", "docs");
+  sb.ok(root, "commit", "-m", "private stuff");
+  const pushed = sb.ok(root, "push");
+  expect(pushed).toContain("push -u origin main");
+  return { root, baseRemote, notesRemote, keysRemote };
+}
+
+function attachClone(name: string, r: ReturnType<typeof published>): string {
+  sb.git(sb.dir, "clone", "-q", r.baseRemote, name);
+  const clone = sb.path(name);
+  expect(existsSync(join(clone, "NOTES.md"))).toBe(false);
+  sb.ok(clone, "init");
+  sb.ok(clone, "attach", "notes", r.notesRemote);
+  sb.ok(clone, "attach", "keys", r.keysRemote);
+  return clone;
+}
+
+describe("6. collaborator flow", () => {
+  test("commit + push, then clone + attach reproduces layers and excludes", () => {
+    const r = published();
+    // The public repo never saw private file names.
+    const publicFiles = sb.git(r.baseRemote, "ls-tree", "-r", "--name-only", "main");
+    expect(publicFiles.split("\n").filter(Boolean).sort()).toEqual([".gitignore", "README.md"]);
+    expect(sb.git(r.baseRemote, "log", "--all", "--format=%s")).not.toContain("private");
+
+    const clone = attachClone("clone", r);
+    for (const f of ["NOTES.md", "roadmap/q1.md", "docs/guide.md", "docs/api.env", ".env"]) {
+      expect(sb.read(clone, f)).toBe(sb.read(r.root, f));
+    }
+    for (const repo of [".git", ".sich/notes", ".sich/keys"]) {
+      expect(managedBlock(sb.read(clone, `${repo}/info/exclude`))).toEqual(
+        managedBlock(sb.read(r.root, `${repo}/info/exclude`)),
+      );
+    }
+    expect(baseStatus(clone)).toEqual([]);
+    expect(layerStatus(clone, "notes")).toEqual([]);
+    expect(layerStatus(clone, "keys")).toEqual([]);
+    expect(sb.layerGit(clone, "notes", "rev-parse", "--abbrev-ref", "@{u}").trim()).toBe("origin/main");
+    expect(sb.ok(clone, "check")).toContain("ok");
+    const status = sb.ok(clone, "status");
+    expect(status).toMatch(/^base\s+main\s+origin\/main up to date\s+clean$/m);
+    expect(status).toMatch(/^notes\s+main\s+origin\/main up to date\s+clean$/m);
+  });
+
+  test("attach refuses to overwrite existing files", () => {
+    const r = published();
+    sb.git(sb.dir, "clone", "-q", r.baseRemote, "clone");
+    const clone = sb.path("clone");
+    sb.write(clone, "NOTES.md", "local\n");
+    expect(sb.bad(clone, "attach", "notes", r.notesRemote)).toContain("NOTES.md");
+    expect(sb.read(clone, "NOTES.md")).toBe("local\n");
+    expect(existsSync(join(clone, ".sich/notes"))).toBe(false);
+  });
+});
+
+describe("7. pull", () => {
+  test("pull brings in another clone's new claims and regenerates excludes", () => {
+    const r = published();
+    const a = attachClone("a", r);
+    const b = attachClone("b", r);
+
+    sb.write(b, "ideas/one.md", "idea\n");
+    sb.write(b, "TODO.md", "todo\n");
+    sb.ok(b, "add", "notes", "ideas", "TODO.md");
+    sb.ok(b, "commit", "notes", "-m", "ideas");
+    sb.ok(b, "push", "notes");
+
+    expect(sb.read(a, ".git/info/exclude")).not.toContain("/ideas/");
+    const out = sb.ok(a, "pull");
+    expect(out).toContain("notes: git pull --rebase --autostash");
+    expect(sb.read(a, "ideas/one.md")).toBe("idea\n");
+    expect(managedBlock(sb.read(a, ".git/info/exclude"))).toContain("/ideas/");
+    expect(baseStatus(a)).toEqual([]);
+    expect(layerStatus(a, "notes")).toEqual([]);
+
+    // sync = pull + push, per repo.
+    sb.write(a, "ideas/two.md", "two\n");
+    sb.ok(a, "commit", "-m", "two");
+    sb.ok(a, "sync");
+    sb.ok(b, "pull", "notes");
+    expect(sb.read(b, "ideas/two.md")).toBe("two\n");
+  });
+
+  test("repos without a remote are skipped; failures stop with the repo name", () => {
+    const root = setup("notes", "keys");
+    expect(sb.ok(root, "pull")).toContain("base: no remote, skipped");
+    sb.layerGit(root, "notes", "remote", "add", "origin", sb.path("does-not-exist.git"));
+    const r = sb.sich(root, ["push"]);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("push failed in notes");
+    expect(sb.bad(root, "push", "nope")).toContain("no such layer");
+  });
+});
+
+describe("8. check and the pre-commit hook", () => {
+  test("check detects conflicts and stale excludes; --fix repairs excludes", () => {
+    const root = setup("notes", "keys");
+    sb.write(root, "a.md", "a\n");
+    sb.ok(root, "add", "notes", "a.md");
+    expect(sb.ok(root, "check")).toContain("ok");
+
+    // Same path claimed by two layers (hand-edited manifest).
+    sb.write(root, ".sich/keys.paths", "a.md\n");
+    expect(sb.bad(root, "check")).toContain("a.md is claimed by more than one layer: keys, notes");
+    sb.write(root, ".sich/keys.paths", "");
+
+    // Base tracking a claimed path.
+    sb.git(root, "add", "-f", "a.md");
+    sb.git(root, "commit", "-q", "--no-verify", "-m", "leak");
+    expect(sb.bad(root, "check")).toContain("base tracks a.md, which is claimed by notes");
+    sb.git(root, "rm", "-q", "--cached", "a.md");
+    sb.git(root, "commit", "-q", "--no-verify", "-m", "unleak");
+
+    // Base tracking .sich/.
+    sb.git(root, "add", "-f", ".sich/notes.paths");
+    expect(sb.bad(root, "check")).toContain("under .sich/");
+    sb.git(root, "rm", "-q", "--cached", ".sich/notes.paths");
+
+    // Stale exclude block (check itself does not regenerate).
+    const excl = join(".sich", "notes", "info", "exclude");
+    sb.write(root, excl, sb.read(root, excl).replace("!/a.md\n", ""));
+    expect(sb.bad(root, "check")).toContain("exclude block of notes is stale");
+    expect(sb.ok(root, "check", "--fix")).toContain("rewrote the exclude block of notes");
+    expect(sb.read(root, excl)).toContain("!/a.md\n");
+    expect(sb.ok(root, "check")).toContain("ok");
+  });
+
+  test("the hook blocks committing a claimed file to base, but allows normal commits", () => {
+    const root = setup("notes");
+    sb.write(root, "secret.md", "s\n");
+    sb.write(root, "public.md", "p\n");
+    sb.ok(root, "add", "notes", "secret.md");
+    sb.ok(root, "commit", "-m", "secret");
+    sb.git(root, "add", "public.md");
+    sb.git(root, "commit", "-q", "--no-verify", "-m", "public");
+
+    const PATH = `${sb.sichOnPath()}:${process.env.PATH}`;
+    sb.git(root, "add", "-f", "secret.md");
+    const blocked = sb.run(["git", "commit", "-m", "leak"], root, { PATH });
+    expect(blocked.code).not.toBe(0);
+    expect(blocked.stdout + blocked.stderr).toContain("staged change to private path secret.md");
+    expect(blocked.stdout + blocked.stderr).toContain("git restore --staged -- secret.md");
+    expect(sb.git(root, "log", "--format=%s")).toBe("public\ninit\n");
+
+    // A partial commit (git commit -- <path>) uses a temporary index passed via
+    // GIT_INDEX_FILE: only what is actually committed counts, so this passes
+    // although secret.md is still staged in the real index.
+    sb.write(root, "public.md", "p1\n");
+    const partial = sb.run(["git", "commit", "-q", "-m", "partial", "--", "public.md"], root, { PATH });
+    expect(partial.stdout + partial.stderr).toBe("");
+    expect(partial.code).toBe(0);
+    expect(sb.git(root, "show", "--name-only", "--format=", "HEAD")).toBe("public.md\n");
+
+    sb.git(root, "restore", "--staged", "secret.md");
+    sb.write(root, "public.md", "p2\n");
+    sb.git(root, "add", "public.md");
+    const allowed = sb.run(["git", "commit", "-q", "-m", "public2"], root, { PATH });
+    expect(allowed.stdout + allowed.stderr).toBe("");
+    expect(allowed.code).toBe(0);
+
+    // Without sich on PATH, SICH_BIN tells the hook where sich is.
+    const noPath = { PATH: "/usr/bin:/bin", SICH_BIN: join(sb.sichOnPath(), "sich") };
+    sb.git(root, "add", "-f", "secret.md");
+    const blockedNoPath = sb.run(["git", "commit", "-m", "leak"], root, noPath);
+    expect(blockedNoPath.code).not.toBe(0);
+    expect(blockedNoPath.stdout + blockedNoPath.stderr).toContain("staged change to private path secret.md");
+    sb.git(root, "restore", "--staged", "secret.md");
+    sb.write(root, "public.md", "p3\n");
+    sb.git(root, "add", "public.md");
+    const allowedNoPath = sb.run(["git", "commit", "-q", "-m", "p3"], root, noPath);
+    expect(allowedNoPath.stdout + allowedNoPath.stderr).toBe("");
+    expect(allowedNoPath.code).toBe(0);
+  });
+
+  test("the hook blocks commits when sich can't be found (fail closed)", () => {
+    const root = setup("notes");
+    sb.write(root, "public.md", "p\n");
+    sb.git(root, "add", "public.md");
+    const noSich = { PATH: "/usr/bin:/bin", SICH_BIN: "" };
+    const blocked = sb.run(["git", "commit", "-q", "-m", "public"], root, noSich);
+    expect(blocked.code).not.toBe(0);
+    expect(blocked.stderr).toContain("commit blocked: 'sich' not found");
+    expect(blocked.stderr).toContain("SICH_BIN");
+    expect(blocked.stderr).toContain("--no-verify");
+    expect(sb.git(root, "log", "--format=%s")).toBe("init\n");
+
+    const wrongBin = { PATH: "/usr/bin:/bin", SICH_BIN: "/nonexistent/sich" };
+    const blocked2 = sb.run(["git", "commit", "-q", "-m", "public"], root, wrongBin);
+    expect(blocked2.code).not.toBe(0);
+    expect(blocked2.stderr).toContain("'/nonexistent/sich' not found");
+  });
+
+  test("init updates a hook written by an older sich", () => {
+    const root = setup();
+    const hookRel = ".git/hooks/pre-commit";
+    const old = "#!/bin/sh\n# Installed by sich: old version\nexec sich check --staged\n";
+    sb.write(root, hookRel, old);
+    expect(sb.ok(root, "init")).toContain("updated pre-commit hook");
+    expect(sb.read(root, hookRel)).toContain("SICH_BIN");
+    expect(sb.ok(root, "init")).not.toContain("updated pre-commit hook");
+  });
+
+  test("the hook lets base commit the removal of a moved path", () => {
+    const root = setup("notes");
+    sb.write(root, "plan.md", "p\n");
+    sb.git(root, "add", "plan.md");
+    sb.git(root, "commit", "-q", "-m", "plan");
+    sb.ok(root, "add", "notes", "plan.md", "--move");
+    const PATH = `${sb.sichOnPath()}:${process.env.PATH}`;
+    const r = sb.run(["git", "commit", "-q", "-m", "move plan out"], root, { PATH });
+    expect(r.stdout + r.stderr).toBe("");
+    expect(r.code).toBe(0);
+  });
+});
+
+describe("9. which / ls / rm / passthrough / names / --gh", () => {
+  test("which, ls and rm", () => {
+    const root = setup("notes");
+    sb.write(root, ".gitignore", "*.log\n");
+    sb.git(root, "add", ".gitignore");
+    sb.git(root, "commit", "-q", "-m", "ignore");
+    sb.write(root, "NOTES.md", "n\n");
+    sb.write(root, "roadmap/q1.md", "q\n");
+    sb.write(root, "debug.log", "x\n");
+    sb.write(root, "loose.txt", "x\n");
+    sb.ok(root, "add", "notes", "NOTES.md", "roadmap");
+    sb.ok(root, "commit", "-m", "notes");
+
+    expect(sb.ok(root, "which", "NOTES.md").trim()).toBe("notes");
+    expect(sb.ok(root, "which", "roadmap/q1.md").trim()).toBe("notes");
+    expect(sb.ok(root, "which", "roadmap/later.md").trim()).toBe("notes (claimed, not yet committed)");
+    expect(sb.ok(root, "which", "README.md").trim()).toBe("base");
+    expect(sb.ok(root, "which", "debug.log").trim()).toBe("ignored");
+    expect(sb.ok(root, "which", "loose.txt").trim()).toBe("untracked");
+    expect(sb.ok(join(root, "roadmap"), "which", "q1.md").trim()).toBe("notes");
+
+    const ls = sb.ok(root, "ls");
+    expect(ls).toContain("notes\n  claims:\n    NOTES.md\n    roadmap/\n  tracked:\n");
+    expect(ls).toContain("    roadmap/q1.md\n");
+    expect(sb.bad(root, "ls", "nope")).toContain("no such layer");
+
+    expect(sb.bad(root, "rm", "notes", "roadmap/q1.md")).toContain("inside the claim roadmap/");
+    const rm = sb.ok(root, "rm", "notes", "NOTES.md");
+    expect(rm).toContain("untracked in base");
+    expect(existsSync(join(root, "NOTES.md"))).toBe(true);
+    expect(sb.read(root, ".sich/notes.paths")).not.toContain("NOTES.md");
+    expect(baseStatus(root)).toEqual(["NOTES.md", "loose.txt"]);
+    expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "NOTES.md"]);
+    sb.ok(root, "commit", "-m", "release");
+    expect(layerFiles(root, "notes")).toEqual([".sich/notes.paths", "roadmap/q1.md"]);
+    expect(sb.ok(root, "which", "NOTES.md").trim()).toBe("untracked");
+  });
+
+  test("passthrough runs git against the layer and returns git's exit code", () => {
+    const root = setup("notes");
+    const log = sb.sich(root, ["notes", "log", "--format=%s"]);
+    expect(log.code).toBe(0);
+    expect(log.stdout).toBe("sich: create layer notes\n");
+    expect(sb.sich(root, ["notes", "rev-parse", "--verify", "-q", "nope"]).code).toBe(1);
+    expect(sb.sich(root, ["notes", "no-such-subcommand"]).code).not.toBe(0);
+    expect(sb.sich(root, ["base", "log", "--format=%s"]).stdout).toBe("init\n");
+    expect(sb.bad(root, "nosuchlayer", "status")).toContain("unknown command or layer");
+  });
+
+  test("reserved and invalid layer names are rejected", () => {
+    const root = setup();
+    for (const name of ["base", "status", "add", "help"]) {
+      expect(sb.bad(root, "new", name)).toContain("reserved");
+    }
+    for (const name of ["Notes", "-x", "a/b", "_x", "with space"]) {
+      expect(sb.bad(root, "new", name, "--remote", "x")).toMatch(/invalid layer name|unknown option/);
+    }
+    sb.ok(root, "new", "my-notes.v2");
+    expect(sb.bad(root, "new", "my-notes.v2")).toContain("already exists");
+  });
+
+  test("--gh creates a private repo with the (fake) gh CLI and sets origin", () => {
+    const root = setup();
+    sb.git(root, "remote", "add", "origin", "git@github.com:me/myproj.git");
+    const log = sb.path("gh.log");
+    const gh = sb.script(
+      "fake-gh",
+      `#!/bin/sh\necho "$@" >> "${log}"\nif [ "$2" = view ]; then echo "git@github.com:me/$3.git"; fi\n`,
+    );
+    const r = sb.sich(root, ["new", "notes", "--gh"], { SICH_GH: gh });
+    expect(r.code).toBe(0);
+    expect(readFileSync(log, "utf8")).toBe(
+      "repo create myproj-notes --private\nrepo view myproj-notes --json sshUrl -q .sshUrl\n",
+    );
+    expect(sb.layerGit(root, "notes", "remote", "get-url", "origin").trim()).toBe("git@github.com:me/myproj-notes.git");
+
+    const r2 = sb.sich(root, ["new", "keys", "--gh", "custom-name"], { SICH_GH: gh });
+    expect(r2.code).toBe(0);
+    expect(sb.layerGit(root, "keys", "remote", "get-url", "origin").trim()).toBe("git@github.com:me/custom-name.git");
+
+    const failing = sb.script("failing-gh", "#!/bin/sh\nexit 3\n");
+    expect(sb.sich(root, ["new", "x", "--gh"], { SICH_GH: failing }).code).toBe(1);
+    expect(existsSync(join(root, ".sich/x"))).toBe(false);
+  });
+});
+
+describe("cli basics", () => {
+  test("--help, <cmd> --help, --version, -C, uninitialized repo", () => {
+    const root = sb.repo("proj");
+    expect(sb.ok(root, "--help")).toContain("usage: sich");
+    expect(sb.ok(root, "add", "--help")).toContain("usage: sich add");
+    expect(sb.ok(root, "--version")).toMatch(/^sich \d+\.\d+\.\d+/);
+    expect(sb.bad(root, "status")).toContain("not initialized");
+    sb.ok(sb.dir, "-C", "proj", "init");
+    expect(sb.ok(sb.dir, "-C", root, "status")).toMatch(/^base\s+main/m);
+    expect(sb.bad(sb.dir, "status")).toContain("not inside a git repository");
+    expect(sb.bad(root, "status", "--bogus")).toContain("unknown option");
+    expect(sb.bad(root, "commit")).toContain("usage");
+    expect(sb.bad(root, "commit", "base", "-m", "x")).toContain("use git commit for base");
+  });
+
+  test("--version is plain by default and -dev for a SICH_DEV=true build", () => {
+    const root = sb.repo("proj");
+    expect(sb.ok(root, "--version")).toBe(`sich ${pkg.version}\n`);
+
+    // Same build as `SICH_DEV=true pnpm run build` (what install:global does), into the sandbox.
+    const devCli = sb.path("dev/cli.js");
+    const src = join(dirname(CLI), "../src/cli.ts");
+    const build = ["bun", "build", src, "--target", "node", "--outfile", devCli, "--define", "SICH_DEV=true"];
+    expect(sb.run(build, sb.dir).code).toBe(0);
+    expect(sb.run(["node", devCli, "--version"], root).stdout).toBe(`sich ${pkg.version}-dev\n`);
+  });
+
+  test("status counts and -v", () => {
+    const root = setup("notes");
+    sb.write(root, "NOTES.md", "n\n");
+    sb.write(root, "extra.md", "e\n");
+    sb.ok(root, "add", "notes", "NOTES.md");
+    const out = sb.ok(root, "status", "-v");
+    expect(out).toMatch(/^base\s+main\s+no upstream\s+1 untracked$/m);
+    expect(out).toMatch(/^notes\s+main\s+no upstream\s+2 staged$/m);
+    expect(out).toContain("    A  NOTES.md");
+    expect(out).toContain("    ?? extra.md");
+  });
+});
