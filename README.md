@@ -152,8 +152,9 @@ new files created inside a claimed directory automatically belong to that layer.
 **Guard.** The base `pre-commit` hook runs `sich check --staged`, which refuses
 a base commit that stages a claimed path or anything under `.sich/` (e.g. after
 `git add -f`; on case-insensitive filesystems under any spelling). It runs the
-full `sich check`, so other problems it reports (like stale excludes) also block
-base commits until fixed. Where sich isn't set up (a linked `git worktree`) it
+rest of `sich check` too: ambiguous ownership between layers (overlapping
+claims, a file tracked by the wrong layer) also blocks, since it could leak one
+layer's files into another; stale exclude rules only warn. Where sich isn't set up (a linked `git worktree`) it
 does nothing. The hook runs `$SICH_BIN` if set, else `sich` on `PATH`; if it
 can't find either it blocks the commit (fail closed). Skip the check once with
 `git commit --no-verify`. GUI git clients may not see your shell's `PATH` or

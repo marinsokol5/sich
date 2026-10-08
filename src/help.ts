@@ -114,7 +114,8 @@ Reports: paths claimed or tracked by two layers, base tracking claimed paths or
   --fix      rewrite stale exclude blocks
   --staged   also fail if base's index stages claimed paths or .sich/
              (this is what the pre-commit hook runs; silent when all is well,
-             and a no-op where sich isn't set up, e.g. a linked worktree)
+             stale excludes only warn, and a no-op where sich isn't set up,
+             e.g. a linked worktree)
 Exits 1 if any issue remains.`,
 
   help: `usage: sich help [command]`,

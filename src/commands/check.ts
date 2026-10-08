@@ -17,7 +17,7 @@ import {
 } from "../context";
 import { applyExclude, describeExclude, excludeFileShown } from "../excludes";
 import { git, splitZ } from "../git";
-import { c, fail, out, plural, shellQuote } from "../ui";
+import { c, fail, out, plural, shellQuote, warn } from "../ui";
 
 /**
  * Inside a pre-commit hook git points GIT_INDEX_FILE at the index being committed
@@ -47,7 +47,13 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
     if (p.flags["--staged"]) return 0;
     requireInit(ctx);
   }
-  const issues: string[] = [];
+  /**
+   * Leaks into base and ambiguous ownership between layers (which can leak one
+   * layer's files into another, e.g. personal notes into a team layer). Always block.
+   */
+  const problems: string[] = [];
+  /** Stale exclude rules: not a leak by themselves, and any sich command rewrites them. */
+  const stale: string[] = [];
   const fixed: string[] = [];
   const hints: string[] = [];
   const claims = allClaims(ctx);
@@ -68,10 +74,10 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
       if (a.layer === b.layer) continue;
       const [x, y] = [fold(a.claim), fold(b.claim)];
       if (samePath(x, y)) {
-        issues.push(`${bare(a.claim)} is claimed by more than one layer: ${a.layer}, ${b.layer}`);
+        problems.push(`${bare(a.claim)} is claimed by more than one layer: ${a.layer}, ${b.layer}`);
       } else if (covers(x, y) || covers(y, x)) {
         const [outer, inner] = covers(x, y) ? [a, b] : [b, a];
-        issues.push(
+        problems.push(
           `${inner.claim} (${inner.layer}) is nested inside ${outer.claim} (${outer.layer}); ` +
             `claims can't nest across layers (fix: sich rm ${inner.layer} ${shellQuote(inner.claim)})`,
         );
@@ -90,10 +96,10 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
   for (const [f, ls] of trackedBy) {
     const by = owner(f)?.layer;
     if (ls.length > 1) {
-      issues.push(`${f} is tracked by more than one layer: ${ls.join(", ")}${by ? ` (owner: ${by})` : ""}`);
+      problems.push(`${f} is tracked by more than one layer: ${ls.join(", ")}${by ? ` (owner: ${by})` : ""}`);
     } else if (by !== ls[0]) {
       const why = by ? `it belongs to ${by}` : "none of its claims cover it";
-      issues.push(`${ls[0]} tracks ${f} but ${why} (fix: sich ${ls[0]} rm --cached -- ${shellQuote(f)})`);
+      problems.push(`${ls[0]} tracks ${f} but ${why} (fix: sich ${ls[0]} rm --cached -- ${shellQuote(f)})`);
     }
   }
 
@@ -105,14 +111,14 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
       git(ctx.base, ["diff", "--cached", "--name-only", "--no-renames", "--diff-filter=d", "-z"], { env: indexEnv })
         .stdout,
     );
-    const leaks = staged.filter((f) => isSich(f) || owner(f));
-    for (const f of leaks) {
+    const stagedPrivate = staged.filter((f) => isSich(f) || owner(f));
+    for (const f of stagedPrivate) {
       const by = owner(f);
-      issues.push(`base has a staged change to private path ${f}${by ? ` (claimed by ${by.layer})` : ""}`);
+      problems.push(`base has a staged change to private path ${f}${by ? ` (claimed by ${by.layer})` : ""}`);
       reported.add(f);
     }
-    if (leaks.length) {
-      hints.push(`unstage with: git restore --staged -- ${leaks.map(shellQuote).join(" ")}`);
+    if (stagedPrivate.length) {
+      hints.push(`unstage with: git restore --staged -- ${stagedPrivate.map(shellQuote).join(" ")}`);
     }
   }
 
@@ -126,10 +132,10 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
       continue;
     }
     const by = owner(f);
-    if (by) issues.push(`base tracks ${f}, which is claimed by ${by.layer} (fix: git rm --cached -- ${shellQuote(f)})`);
+    if (by) problems.push(`base tracks ${f}, which is claimed by ${by.layer} (fix: git rm --cached -- ${shellQuote(f)})`);
   }
   if (sichFiles) {
-    issues.push(`base tracks ${plural(sichFiles, "file")} under .sich/ (fix: git rm -r --cached -- .sich/)`);
+    problems.push(`base tracks ${plural(sichFiles, "file")} under .sich/ (fix: git rm -r --cached -- .sich/)`);
   }
 
   // Generated exclude blocks out of date.
@@ -139,18 +145,23 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
       applyExclude(t, true);
       fixed.push(`rewrote: ${describeExclude(t)}`);
     } else {
-      issues.push(`stale exclude rules of ${t.repo.name} in ${excludeFileShown(t.repo)} (fix: sich check --fix)`);
+      stale.push(`stale exclude rules of ${t.repo.name} in ${excludeFileShown(t.repo)} (fix: sich check --fix)`);
     }
   }
 
+  // In the hook (--staged) stale excludes only warn, so they never push anyone
+  // towards `git commit --no-verify`, which would skip the leak checks too.
+  const hook = p.flags["--staged"] === true;
+  const blocking = hook ? problems : [...problems, ...stale];
   for (const f of fixed) out(`${c.green("✓")} ${f}`);
-  for (const i of issues) out(`${c.red("✗")} ${i}`);
+  if (hook) for (const s of stale) warn(`${s}; not blocking this commit`);
+  for (const i of blocking) out(`${c.red("✗")} ${i}`);
   for (const h of hints) out(`  ${h}`);
-  if (issues.length) {
-    out(c.red(`sich check: ${plural(issues.length, "issue")} found`));
+  if (blocking.length) {
+    out(c.red(`sich check: ${plural(blocking.length, "issue")} found`));
     return 1;
   }
   // Quiet on success with --staged: it runs on every base commit via the hook.
-  if (!p.flags["--staged"]) out(c.green("sich check: ok"));
+  if (!hook) out(c.green("sich check: ok"));
   return 0;
 }

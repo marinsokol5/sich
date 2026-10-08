@@ -595,6 +595,30 @@ describe("8. check and the pre-commit hook", () => {
     expect(blocked2.stderr).toContain("'/nonexistent/sich' not found");
   });
 
+  test("the hook blocks on ambiguous ownership but only warns about stale excludes", () => {
+    const root = setup("notes", "team");
+    sb.write(root, "public.md", "p\n");
+    sb.write(root, "about-teammates.md", "private\n");
+    sb.ok(root, "add", "notes", "about-teammates.md");
+
+    const excl = join(".sich", "notes", "info", "exclude");
+    sb.write(root, excl, sb.read(root, excl).replace("!/about-teammates.md\n", ""));
+    sb.git(root, "add", "public.md");
+    const warned = sb.run(["git", "commit", "-q", "-m", "public"], root);
+    expect(warned.code).toBe(0);
+    expect(warned.stderr).toContain("stale exclude rules of notes in .sich/notes/info/exclude");
+    expect(warned.stderr).toContain("not blocking this commit");
+
+    // Two layers claiming the same file could leak personal notes into a shared layer.
+    sb.write(root, ".sich/team.paths", "about-teammates.md\n");
+    sb.write(root, "public.md", "p2\n");
+    sb.git(root, "add", "public.md");
+    const blocked = sb.run(["git", "commit", "-q", "-m", "public2"], root);
+    expect(blocked.code).not.toBe(0);
+    expect(blocked.stdout + blocked.stderr).toContain("about-teammates.md is claimed by more than one layer: notes, team");
+    expect(sb.git(root, "log", "--format=%s")).toBe("public\ninit\n");
+  });
+
   test("init updates a hook written by an older sich", () => {
     const root = setup();
     const hookRel = ".git/hooks/pre-commit";
