@@ -21,6 +21,11 @@ myproject/
 Plain `git` only ever sees base files. Private file names never appear in the
 public repo: not in commits, not in `.gitignore`.
 
+**The name** is a nod to the *sietch*, the hidden cave communities of the Fremen
+in Frank Herbert's *Dune*, where only the tribe knows the way in (the word itself
+echoes the Zaporozhian Sich, a Cossack stronghold). It's also German for
+"oneself", which suits private notes.
+
 ## Why
 
 - Notes, plans and scratch files you want versioned and synced, but not public.
@@ -29,36 +34,14 @@ public repo: not in commits, not in `.gitignore`.
 
 ## Install
 
-Runs on Node ≥ 18 with git ≥ 2.28. Building from source also needs pnpm, plus
-[Bun](https://bun.sh) for bundling and tests.
+Requires Node ≥ 18 and git ≥ 2.28.
 
 ```sh
-git clone https://github.com/marinsokol5/sich.git && cd sich
-pnpm install
-pnpm run install:global        # build, pack and install as the global `sich`
+pnpm add -g sich        # or: npm install -g sich
 ```
 
-`install:global` packs the checkout as it would be published and installs that
-with `pnpm add -g`, built with `SICH_DEV=true` so `sich --version` prints
-`0.1.0-dev`. A copy installed from npm prints plain `0.1.0` (publishing always
-rebuilds without the flag). Once sich is on npm, use `pnpm add -g sich` instead.
-
-The pre-commit guard needs `sich` on `PATH`, or `SICH_BIN` set to its path (see **Guard** below).
-
-## Development
-
-- `pnpm run build` bundles `src/` with Bun into one Node script, `dist/cli.js` (~50 KB).
-  Try changes with `node dist/cli.js <command>`; the global `sich` stays the
-  installed version.
-- To have the pre-commit hook use your build for one commit:
-  `SICH_BIN=$PWD/dist/cli.js git commit …`
-- `pnpm test` rebuilds and runs the suite (with `bun test`) against `dist/cli.js`;
-  `pnpm run typecheck` checks types.
-
-Issues and pull requests are welcome. Most tests are integration tests in
-`test/sich.test.ts`: each builds throwaway repos (and local bare remotes) with
-the `Sandbox` helper and drives the built CLI, so add a test there with any
-behavior change, and make sure `pnpm run typecheck` and `pnpm test` pass.
+`sich` has to be on your `PATH` (or `SICH_BIN` set to it) for the pre-commit
+guard to work; see **Guard** below.
 
 ## Quickstart
 
@@ -81,15 +64,15 @@ Global: `-C <dir>` (run as if in `<dir>`), `-h/--help` (also `sich <cmd> --help`
 | --- | --- |
 | `sich init` | Creates `.sich/`, writes the base exclude block, installs the base pre-commit hook. If a `pre-commit` hook already exists or `core.hooksPath` is set, it prints the one line to add instead. Idempotent. |
 | `sich new <layer> [--remote <url> \| --gh [name]]` | Creates a layer with an empty manifest and an initial commit. `--gh` runs `gh repo create <name> --private` (default name `<base-repo>-<layer>`) and sets `origin` to its SSH URL. `SICH_GH` overrides the `gh` binary. |
-| `sich attach <layer> <url>` | Collaborator flow: fetches the layer and checks out its default branch into the working tree. Refuses to overwrite existing files. |
-| `sich add <layer> <path...> [--move]` | Claims files or directories (relative to the current directory) and stages them in the layer. Refuses paths tracked by base or owned by another layer; `--move` untracks them from the old owner first (including that layer's claims inside a claimed folder). Claims can't nest across layers: a path inside another layer's claimed folder is always refused. |
-| `sich rm <layer> <path...>` | Drops exact claims and untracks them in the layer. Files stay on disk (they now show as untracked in base, or belong to another layer whose directory claim contains them; sich warns). |
+| `sich attach <layer> <url>` | Collaborator flow: fetches the layer and checks out its default branch into the working tree (setting up `.sich/` if needed). Refuses to overwrite existing files. |
+| `sich add <layer> <path...> [--move]` | Claims files or directories (relative to the current directory) and stages them in the layer. Refuses paths tracked by base or owned by another layer; `--move` untracks them from the old owner first (including that layer's claims inside a claimed folder) and warns, listing what it dropped. Claims can't nest across layers: a path inside another layer's claimed folder is always refused. |
+| `sich rm <layer> <path...>` | Drops exact claims and untracks them in the layer. Files stay on disk and now show as untracked in base. |
 | `sich which <path>` | Prints the owner: a layer (`(claimed, not yet committed)` if not tracked yet), `base`, `ignored`, or `untracked`. |
 | `sich ls [layer]` | Each layer's claims and tracked files. |
 | `sich status [-v] [--fetch]` | One row per repo (base first): branch, upstream ahead/behind, staged/modified/untracked counts. `-v` lists files, `--fetch` fetches first. |
 | `sich commit [layer...] -m <msg>` | `git add -A` + commit in each target layer (default: every layer with changes). Files the layer doesn't own are left out with a warning. Use plain `git commit` for base. |
 | `sich pull \| push \| sync [repo...]` | Base + all layers, or the named ones (`base` allowed). `pull` = `git pull --rebase --autostash`, `push` = `git push` (`-u origin <branch>` if no upstream yet), `sync` = pull then push. Repos without a remote are skipped. Stops at the first failure, and before a pull that would overwrite a file the repo doesn't track (see **Shared working tree**). |
-| `sich check [--fix] [--staged]` | Reports paths claimed or tracked by two layers, base tracking claimed paths or `.sich/`, layers tracking files they don't own, and stale exclude blocks (`--fix` rewrites them). `--staged` also fails if base's index stages a claimed path or anything in `.sich/`. Exit 1 on any issue. |
+| `sich check [--fix] [--staged]` | Reports leaks into base (claimed paths or `.sich/` tracked by base), ambiguous ownership (claims overlapping or nested across layers, files tracked by the wrong layer or by two layers) and stale exclude blocks (`--fix` rewrites them). `--staged` also checks what base is about to commit; it's what the pre-commit hook runs, and there stale excludes only warn. Exit 1 on any blocking issue. |
 | `sich <layer> <git args...>` | Runs git against a layer, e.g. `sich notes log`, `sich keys diff`. Exits with git's code. |
 | `sich base <git args...>` | Runs git against the base repo. |
 
@@ -106,17 +89,17 @@ sich commit keys -m "shared env" && sich push keys
 # on GitHub: add collaborators to myproject-keys only
 ```
 
-A collaborator:
+A collaborator (with `sich` installed):
 
 ```sh
 git clone git@github.com:you/myproject.git && cd myproject
-sich init
 sich attach keys git@github.com:you/myproject-keys.git
 ```
 
 They now have `.env` in place, invisible to the base repo. Everyone can
 `sich pull`, edit, `sich commit -m ...`, `sich push`. When a teammate claims new
-paths, `sich pull` picks up their manifest and regenerates the excludes.
+paths, `sich pull` picks up their manifest and regenerates the excludes. Layers
+they have no access to never show up for them, not even by name.
 
 ## How it works
 
@@ -149,14 +132,16 @@ the same folder can still belong to different layers.
 Because each layer only "sees" its claims, `git add -A` in a layer is safe, and
 new files created inside a claimed directory automatically belong to that layer.
 
-**Guard.** The base `pre-commit` hook runs `sich check --staged`, which refuses
-a base commit that stages a claimed path or anything under `.sich/` (e.g. after
-`git add -f`; on case-insensitive filesystems under any spelling). It runs the
-rest of `sich check` too: ambiguous ownership between layers (overlapping
-claims, a file tracked by the wrong layer) also blocks, since it could leak one
-layer's files into another; stale exclude rules only warn. Where sich isn't set up (a linked `git worktree`) it
-does nothing. The hook runs `$SICH_BIN` if set, else `sich` on `PATH`; if it
-can't find either it blocks the commit (fail closed). Skip the check once with
+**Guard.** The base `pre-commit` hook runs `sich check --staged`. It blocks a
+base commit that stages a claimed path or anything under `.sich/` (e.g. after
+`git add -f`; on case-insensitive filesystems under any spelling), and it blocks
+while ownership between layers is ambiguous (overlapping claims, a file tracked
+by the wrong layer), since that could leak one layer's files into another.
+Stale exclude rules only warn. Where sich isn't set up (a linked `git worktree`)
+it does nothing.
+
+The hook runs `$SICH_BIN` if set, else `sich` on `PATH`; if it can't find either
+it blocks the commit (fail closed). Skip the check once with
 `git commit --no-verify`. GUI git clients may not see your shell's `PATH` or
 `SICH_BIN`; their commits will then be blocked.
 
@@ -187,6 +172,34 @@ can't find either it blocks the commit (fail closed). Skip the check once with
   `git clean -fdx` (or `git stash --all`) in base would remove every layer's
   files; don't. `sich pull` checks first and stops rather than overwrite a file
   the pulled repo doesn't track; plain `git pull` doesn't.
+
+## Development
+
+Building from source needs pnpm, plus [Bun](https://bun.sh) for bundling and
+tests.
+
+```sh
+git clone https://github.com/marinsokol5/sich.git && cd sich
+pnpm install
+pnpm run install:global        # build, pack and install as the global `sich`
+```
+
+- `install:global` packs the checkout as it would be published and installs it
+  with `pnpm add -g`, built with `SICH_DEV=true`, so `sich --version` prints
+  `0.1.0-dev`. A copy installed from npm prints plain `0.1.0` (publishing always
+  rebuilds without the flag).
+- `pnpm run build` bundles `src/` with Bun into one Node script, `dist/cli.js`
+  (~50 KB). Try changes with `node dist/cli.js <command>`; the global `sich`
+  stays the installed version.
+- To have the pre-commit hook use your build for one commit:
+  `SICH_BIN=$PWD/dist/cli.js git commit …`
+- `pnpm test` rebuilds and runs the suite (with `bun test`) against
+  `dist/cli.js`; `pnpm run typecheck` checks types.
+
+Issues and pull requests are welcome. Most tests are integration tests in
+`test/sich.test.ts`: each builds throwaway repos (and local bare remotes) with
+the `Sandbox` helper and drives the built CLI, so add a test there with any
+behavior change, and make sure `pnpm run typecheck` and `pnpm test` pass.
 
 ## License
 
