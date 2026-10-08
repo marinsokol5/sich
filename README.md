@@ -1,5 +1,7 @@
 # sich
 
+[![npm](https://img.shields.io/npm/v/git-sich)](https://www.npmjs.com/package/git-sich)
+
 CLI for managing multiple git repositories within a single base git repo.
 
 Useful for:
