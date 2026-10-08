@@ -1,19 +1,19 @@
 # sich
 
-CLI for maganing multiple tit repositories within a single base tit repo. 
+CLI for managing multiple git repositories within a single base git repo.
 
 Useful for:
-- version tracking private files alongside your public files in the same folder
-- access control per file, so certain files might be public, while others belong to Org1, and another to Org2; all living alongside each other
+- versioning private files alongside your public files, in the same folder
+- access control per file: some files can be public while others belong to Org1 and others to Org2, all living side by side
 
-`sich` allows a normal git repo (**base**, contained in `.git`) co-exist smoothly with any number of other git repos (**layers**, contained in `.sich/X`). They share the same working tree, each with their own separate commit history and remote.
+`sich` lets a normal git repo (**base**, contained in `.git`) coexist smoothly with any number of other git repos (**layers**, contained in `.sich/X`). They share the same working tree, each with its own separate commit history and remote.
 
-Working with GitHub out of the box, where every new layer can automatically become a new private repo, where GitHub can then handle access control for it.
+Works with GitHub out of the box: every new layer can automatically become a new private repo, and GitHub then handles access control for it.
 
 Plain `git` commands only ever see **base** files. Files from other layers never appear in the
-**base** repo: not in commits, not in `.gitignore`. No other contributor ever even knows about `sich` being used nor about the other repositories, everything works for them as usual.
+**base** repo: not in commits, not in `.gitignore`. Other contributors never even know that `sich` is in use or that the other repositories exist; everything works for them as usual.
 
-**The name** is a shortened (easier-to-type) version of *sietch*, the hidden cave communities of the Fremen in Frank Herbert's *Dune*, where only the tribe knows the way in. Such are the layer of `sich`, only visible to those with access to them.
+**The name** is a shortened (easier-to-type) version of *sietch*, the hidden cave communities of the Fremen in Frank Herbert's *Dune*, where only the tribe knows the way in. Such are the layers of `sich`: only visible to those with access to them.
 
 ## Why
 
@@ -24,7 +24,7 @@ Plain `git` commands only ever see **base** files. Files from other layers never
 ## Install
 
 Requires Node ≥ 18 and git ≥ 2.28.
-Optionally Github CLI (`gh`) of 2.X.
+Optionally the GitHub CLI (`gh`) 2.x, for `sich new --gh`.
 
 ```sh
 npm install -g sich
@@ -33,19 +33,19 @@ npm install -g sich
 ## Quickstart
 
 ```sh
-cd myproject                          # an existing git repo, called base from now on, let's imagine it has a public remote on git@github.com:user/myproject.git 
-sich init                             # creates empty .sich folder and excludes it from base repo (.git/info/exclude)
-sich new personal --gh                # creates a sich layer (or sietch) called "personal" (.sich/personal is created, defining "personal" as a separate Git repo, same format as top-level .git defining base) 
-# because of --gh flag it also automatically creates user/myproject-personal private GitHub repo and sets the remote to be git@github.com:user/myproject-personal.git 
-sich add personal my-notes.md         # personal layer claims my-notes.md file, it automatically gets ignored by base
-sich personal commit -m "adding notes" # commits in personal repo or `sich commit -m "initial commit"` to commit to base + all layers at once
-sich personal push # pushes local personal state to the remote, or "sich push" to push base + all layers
+cd myproject                          # an existing git repo, called base from now on; say it has a public remote at git@github.com:user/myproject.git
+sich init                             # creates an empty .sich folder, excludes it from base (.git/info/exclude) and installs the pre-commit guard
+sich new personal --gh                # creates a layer (a sietch) called "personal": .sich/personal is a separate git repo, in the same format as the top-level .git that defines base
+# with --gh it also creates the private GitHub repo user/myproject-personal and sets it as the remote (git@github.com:user/myproject-personal.git)
+sich add personal my-notes.md         # the personal layer claims my-notes.md; base now ignores it automatically
+sich personal commit -m "adding notes" # commits in the personal repo; or `sich commit -m "..."` commits base + every layer with changes at once
+sich personal push                    # pushes personal to its remote; or `sich push` pushes base + all layers
 
-sich new team --gh # creates another layer, called "team", and user/myproject-team that you could give access to collaborators from your team, personal's exclude gets my-notes.md 
-sich add roadmap.md api-keys.env llm-transcripts/ # claims these files for team layer, so all 3 are added to base exclude and to personal exclude
+sich new team --gh                    # creates another layer, "team", and the private repo user/myproject-team, which you can share with your team
+sich add team roadmap.md api-keys.env llm-transcripts/ # claims these for the team layer; base's exclude now hides all three
 # ...
 
-# A collaborator with sich installed and access to user/myproject-team
+# A collaborator with sich installed and access to user/myproject-team:
 git clone git@github.com:user/myproject.git && cd myproject
 sich attach team git@github.com:user/myproject-team.git
 ```
@@ -78,7 +78,7 @@ ownership
 
 everyday
   status [-v] [--fetch]             per repo: branch, ahead/behind, changes
-  commit [layer...] -m <msg>        commit changed layers (base: use git commit)
+  commit [repo...] -m <msg>         add -A + commit base + all layers (or named)
   pull [repo...]                    pull --rebase base + all layers (or named)
   push [repo...]                    push base + all layers (or named)
   sync [repo...]                    pull, then push
@@ -106,7 +106,7 @@ Claims can't nest across layers.
 
 ## How it works
 
-Basic git all the way down, `sich` is just a very tiny wrapper on top.
+It's plain git all the way down; `sich` is a tiny wrapper on top.
 
 **Layers.** Layer `L` is a regular, non-bare git dir at `.sich/L/` with
 `core.worktree = ../..`, so its working tree is the project root. sich always
@@ -143,25 +143,24 @@ base commit that stages a claimed path or anything under `.sich/` (e.g. after
 while ownership between layers is ambiguous (overlapping claims, a file tracked
 by the wrong layer), since that could leak one layer's files into another.
 Stale exclude rules only warn. Where sich isn't set up (a linked `git worktree`)
-it does nothing.
-Skip the check with `git commit --no-verify`. 
+it does nothing. Skip the check once with `git commit --no-verify`.
 
 ## FAQ
 
-**Why not just keep private files gitignored?** 
-Then they aren't versioned, synced between your machines or sharable with collaborators.
+**Why not just keep private files gitignored?**
+Then they aren't versioned, synced between your machines or shareable with collaborators.
 
-**Why not a second Private GitHub repo?**
-Well this is essentially that, but files stay in the same folder as main repo, next to the code that uses them or context that explains them, and it easily scales to N different layers/repos. 
+**Why not just a second, private GitHub repo?**
+That's essentially what a layer is, but its files stay in the same folder as the main repo, next to the code that uses them or the context that explains them, and it scales easily to any number of layers.
 
 **Why not a git submodule?**
-Other than same benefit from above (files staying next to the place that uses them), changing a layer doesn't need a commit in base (main repo), since their commit histories are fully separate, nor does the submodule's repo name ever appear in the main repo, it's like it doesn't exist from outside. 
+Besides the benefit above (files stay next to what uses them), changing a layer never needs a commit in base, since their commit histories are fully separate, and the layer's repo name never appears in the main repo: from the outside, it doesn't exist.
 
-This being said, this might not be beneficial for some cases, because sometimes a base commit pinning a submodule version is beneficial, such as when they need to be moved together, cause they are only compatible with specific versions of each other. Such as another version package/library/API-spec within your own package, and they just need to co-exist together at all times, and you cannot move base to HEAD-1 without moving the other as well.
+That said, sometimes you do want a base commit to pin a submodule version: when the two only work with specific versions of each other (say, a package, library or API spec inside your own package) and must always move together, so checking out base at `HEAD~1` has to move the other as well. Submodules are the better fit there.
 
 **Can't GitHub do per-file permissions?**
-No. Visibility is set per repo, and anyone who can clone a repo gets every file in it. 
-They do have great repo access control, which this takes advantage of!
+No. Visibility is set per repo, and anyone who can clone a repo gets every file in it.
+Their per-repo access control is great, though, and sich builds on it!
 
 **Is this like git-crypt or sops?**
 No. sich doesn't encrypt anything; it relies on who can access each repo. You can combine the two for real secrets.

@@ -159,7 +159,7 @@ describe("3. overlapping claims", () => {
     sb.ok(root, "add", "notes", "a/b/c.md", "a/x.md", "a/b/d");
     expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "a/b/c.md", "a/b/d/e.md", "a/b/d/f.md", "a/x.md"]);
     expect(baseStatus(root)).toEqual(["a/b/z.md", "a/y.md"]);
-    sb.ok(root, "commit", "-m", "claims");
+    sb.ok(root, "commit", "notes", "-m", "claims");
     // Claiming a sibling later must not hide earlier ones.
     sb.ok(root, "add", "notes", "a/y.md");
     expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "a/y.md"]);
@@ -199,7 +199,7 @@ describe("3. overlapping claims", () => {
     sb.write(root, "docs/guide.md", "g\n");
     sb.write(root, "docs/api.env", "KEY=1\n");
     sb.ok(root, "add", "keys", "docs/api.env");
-    sb.ok(root, "commit", "-m", "keys");
+    sb.ok(root, "commit", "keys", "-m", "keys");
     expect(sb.bad(root, "add", "notes", "docs")).toContain("docs/ contains docs/api.env, claimed by layer keys");
 
     const moved = sb.sich(root, ["add", "notes", "docs", "--move"]);
@@ -210,7 +210,7 @@ describe("3. overlapping claims", () => {
     expect(sb.read(root, ".sich/keys.paths")).not.toContain("docs/api.env");
     expect(sb.layerGit(root, "keys", "ls-files", "--cached", "docs")).toBe("");
     expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "docs/api.env", "docs/guide.md"]);
-    sb.ok(root, "commit", "-m", "moved");
+    sb.ok(root, "commit", "notes", "keys", "-m", "moved");
     expect(sb.ok(root, "check")).toContain("ok");
   });
 
@@ -535,7 +535,7 @@ describe("8. check and the pre-commit hook", () => {
     sb.write(root, "secret.md", "s\n");
     sb.write(root, "public.md", "p\n");
     sb.ok(root, "add", "notes", "secret.md");
-    sb.ok(root, "commit", "-m", "secret");
+    sb.ok(root, "commit", "notes", "-m", "secret");
     sb.git(root, "add", "public.md");
     sb.git(root, "commit", "-q", "--no-verify", "-m", "public");
 
@@ -678,7 +678,7 @@ describe("9. which / ls / rm / passthrough / names / --gh", () => {
     sb.write(root, "debug.log", "x\n");
     sb.write(root, "loose.txt", "x\n");
     sb.ok(root, "add", "notes", "NOTES.md", "roadmap");
-    sb.ok(root, "commit", "-m", "notes");
+    sb.ok(root, "commit", "notes", "-m", "notes");
 
     expect(sb.ok(root, "which", "NOTES.md").trim()).toBe("notes");
     expect(sb.ok(root, "which", "roadmap/q1.md").trim()).toBe("notes");
@@ -700,7 +700,7 @@ describe("9. which / ls / rm / passthrough / names / --gh", () => {
     expect(sb.read(root, ".sich/notes.paths")).not.toContain("NOTES.md");
     expect(baseStatus(root)).toEqual(["NOTES.md", "loose.txt"]);
     expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "NOTES.md"]);
-    sb.ok(root, "commit", "-m", "release");
+    sb.ok(root, "commit", "notes", "-m", "release");
     expect(layerFiles(root, "notes")).toEqual([".sich/notes.paths", "roadmap/q1.md"]);
     expect(sb.ok(root, "which", "NOTES.md").trim()).toBe("untracked");
   });
@@ -765,7 +765,7 @@ describe("cli basics", () => {
     expect(sb.bad(sb.dir, "status")).toContain("not inside a git repository");
     expect(sb.bad(root, "status", "--bogus")).toContain("unknown option");
     expect(sb.bad(root, "commit")).toContain("usage");
-    expect(sb.bad(root, "commit", "base", "-m", "x")).toContain("use git commit for base");
+    expect(sb.bad(root, "commit", "nope", "-m", "x")).toContain("no such layer");
   });
 
   test("--version is plain by default and -dev for a SICH_DEV=true build", () => {
@@ -778,6 +778,23 @@ describe("cli basics", () => {
     const build = ["bun", "build", src, "--target", "node", "--outfile", devCli, "--define", "SICH_DEV=true"];
     expect(sb.run(build, sb.dir).code).toBe(0);
     expect(sb.run(["node", devCli, "--version"], root).stdout).toBe(`sich ${pkg.version}-dev\n`);
+  });
+
+  test("commit covers base too: everything by default, or only the named repos", () => {
+    const root = setup("notes");
+    sb.write(root, "public.md", "p\n");
+    sb.write(root, "NOTES.md", "n\n");
+    sb.ok(root, "add", "notes", "NOTES.md");
+    const both = sb.ok(root, "commit", "-m", "both");
+    expect(both).toMatch(/^base: committed \w+ \(1 file\): public\.md$/m);
+    expect(both).toMatch(/^notes: committed \w+ \(2 files\): \.sich\/notes\.paths, NOTES\.md$/m);
+    expect(sb.git(root, "ls-files")).not.toContain("NOTES.md");
+
+    sb.write(root, "public.md", "p2\n");
+    sb.write(root, "NOTES.md", "n2\n");
+    expect(sb.ok(root, "commit", "base", "-m", "only base")).toMatch(/^base: committed/m);
+    expect(sb.git(root, "log", "--format=%s", "-1")).toBe("only base\n");
+    expect(layerStatus(root, "notes")).toEqual(["NOTES.md"]);
   });
 
   test("status counts and -v", () => {

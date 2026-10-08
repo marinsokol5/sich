@@ -22,7 +22,7 @@ ownership
 
 everyday
   status [-v] [--fetch]             per repo: branch, ahead/behind, changes
-  commit [layer...] -m <msg>        commit changed layers (base: use git commit)
+  commit [repo...] -m <msg>         add -A + commit base + all layers (or named)
   pull [repo...]                    pull --rebase base + all layers (or named)
   push [repo...]                    push base + all layers (or named)
   sync [repo...]                    pull, then push
@@ -101,12 +101,12 @@ staged / modified / untracked files.
   -v, --verbose   list the files
   --fetch         fetch every repo with a remote first`,
 
-  commit: `usage: sich commit [layer...] -m <msg>
+  commit: `usage: sich commit [repo...] -m <msg>
 
-Stages everything in each target layer (git add -A; the layer's whitelist keeps
-this safe) and commits. Files the layer doesn't own (e.g. let in by a '!' rule
-in a .gitignore) are left out with a warning. Defaults to every layer with
-changes. Use plain 'git commit' for base.`,
+Stages everything (git add -A) and commits, in base and every layer with
+changes, or only in the named repos ('base' or layer names). Excludes keep each
+repo to its own files; anything a repo doesn't own (e.g. let in by a '!' rule in
+a .gitignore) is left out with a warning. Base commits run its pre-commit hook.`,
 
   pull: `usage: sich pull [repo...]
 
