@@ -35,19 +35,40 @@ npm install -g git-sich      # the package is git-sich; the command is sich
 ## Quickstart
 
 ```sh
-cd myproject                          # an existing git repo, called base from now on; say it has a public remote at git@github.com:user/myproject.git
-sich init                             # creates an empty .sich folder, excludes it from base (.git/info/exclude) and installs the pre-commit guard
-sich new personal --gh                # creates a layer (a sietch) called "personal": .sich/personal is a separate git repo, in the same format as the top-level .git that defines base
-# with --gh it also creates the private GitHub repo user/myproject-personal and sets it as the remote (git@github.com:user/myproject-personal.git)
-sich add personal my-notes.md         # the personal layer claims my-notes.md; base now ignores it automatically
-sich personal commit -m "adding notes" # commits in the personal repo; or `sich commit -m "..."` commits base + every layer with changes at once
-sich push personal                    # pushes personal to its remote (setting its upstream the first time); or `sich push` pushes base + all layers
+# Start in an existing git repo, called base from now on.
+# Say it has a public remote at git@github.com:user/myproject.git.
+cd myproject
 
-sich new team --gh                    # creates another layer, "team", and the private repo user/myproject-team, which you can share with your team
-sich add team roadmap.md api-keys.env llm-transcripts/ # claims these for the team layer; base's exclude now hides all three
-# ...
+# Create an empty .sich folder, exclude it from base (.git/info/exclude)
+# and install the pre-commit guard.
+sich init
 
-# A collaborator with sich installed and access to user/myproject-team:
+# Create a layer (a sietch) called "personal": .sich/personal is a separate
+# git repo, in the same format as the top-level .git that defines base.
+# --gh also creates the private GitHub repo user/myproject-personal
+# and sets it as the layer's remote.
+sich new personal --gh
+
+# The personal layer claims my-notes.md; base now ignores it automatically.
+sich add personal my-notes.md
+
+# Commit in the personal repo.
+# (`sich commit -m "..."` commits base + every layer with changes at once.)
+sich personal commit -m "adding notes"
+
+# Push personal to its remote, setting its upstream the first time.
+# (`sich push` pushes base + all layers.)
+sich push personal
+
+# Create another layer, "team", and the private repo user/myproject-team,
+# which you can share with your team.
+sich new team --gh
+
+# Claim these for the team layer; base's exclude now hides all three.
+sich add team roadmap.md api-keys.env llm-transcripts/
+
+# A collaborator with sich installed and access to user/myproject-team
+# clones base, then attaches the team layer.
 git clone git@github.com:user/myproject.git && cd myproject
 sich attach team git@github.com:user/myproject-team.git
 ```
