@@ -27,7 +27,7 @@ Requires Node ≥ 22 and git ≥ 2.28.
 Optionally the GitHub CLI (`gh`) 2.x, for `sich new --gh`.
 
 ```sh
-npm install -g sich
+npm install -g git-sich      # the package is git-sich; the command is sich
 ```
 
 ## Quickstart
