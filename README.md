@@ -39,7 +39,7 @@ sich new personal --gh                # creates a layer (a sietch) called "perso
 # with --gh it also creates the private GitHub repo user/myproject-personal and sets it as the remote (git@github.com:user/myproject-personal.git)
 sich add personal my-notes.md         # the personal layer claims my-notes.md; base now ignores it automatically
 sich personal commit -m "adding notes" # commits in the personal repo; or `sich commit -m "..."` commits base + every layer with changes at once
-sich personal push                    # pushes personal to its remote; or `sich push` pushes base + all layers
+sich push personal                    # pushes personal to its remote (setting its upstream the first time); or `sich push` pushes base + all layers
 
 sich new team --gh                    # creates another layer, "team", and the private repo user/myproject-team, which you can share with your team
 sich add team roadmap.md api-keys.env llm-transcripts/ # claims these for the team layer; base's exclude now hides all three
