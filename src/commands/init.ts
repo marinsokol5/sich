@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { excludeTargets, isInitialized, type Ctx } from "../context";
-import { applyExclude } from "../excludes";
+import { applyExclude, describeExclude } from "../excludes";
 import { git } from "../git";
 import { parseArgs } from "../args";
 import { c, fail, out } from "../ui";
@@ -34,10 +34,10 @@ export function ensureInit(ctx: Ctx): void {
   const fresh = !isInitialized(ctx);
   if (fresh) {
     mkdirSync(ctx.sichDir, { recursive: true });
-    out(`created ${c.bold(".sich/")}`);
+    out(`created ${c.bold(".sich/")} (holds every layer's git data and claims list)`);
   }
   for (const t of excludeTargets(ctx)) {
-    if (applyExclude(t, true)) out(`updated ${t.repo.name} exclude block`);
+    if (applyExclude(t, true)) out(describeExclude(t));
   }
   installHook(ctx);
 }
@@ -55,7 +55,7 @@ function installHook(ctx: Ctx): void {
       if (current !== HOOK_BODY) {
         writeFileSync(hook, HOOK_BODY);
         chmodSync(hook, 0o755);
-        out(`updated pre-commit hook (${shown})`);
+        out(`updated pre-commit hook -> ${shown}`);
       }
       return;
     }
@@ -72,7 +72,7 @@ function installHook(ctx: Ctx): void {
   mkdirSync(hooksDir, { recursive: true });
   writeFileSync(hook, HOOK_BODY);
   chmodSync(hook, 0o755);
-  out(`installed pre-commit hook (${shown})`);
+  out(`installed pre-commit hook -> ${shown}`);
 }
 
 export function cmdInit(ctx: Ctx, args: string[]): number {

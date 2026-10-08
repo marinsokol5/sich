@@ -24,6 +24,7 @@ import {
   syncExcludes,
   type Ctx,
 } from "../context";
+import { excludeFileShown } from "../excludes";
 import { git, isIgnored, splitZ, trackedUnder, type Repo } from "../git";
 import { c, fail, listSome, note, out, plural, warn } from "../ui";
 
@@ -97,7 +98,7 @@ export function cmdAdd(ctx: Ctx, args: string[]): number {
           `Rewrite that history and rotate any secrets if that matters.`,
       );
     } else {
-      out(`moved ${m.claim} from ${m.from.name} (untracked there; commit with: sich commit ${m.from.name} -m ...)`);
+      out(`moved ${m.claim} from ${m.from.name} -> ${manifestRel(m.from.name)} (untracked there; commit with: sich commit ${m.from.name} -m ...)`);
     }
   }
 
@@ -111,7 +112,9 @@ export function cmdAdd(ctx: Ctx, args: string[]): number {
   git(repo, ["add", "-f", "--", manifestRel(layer)]);
 
   for (const t of already) note(`${t} was already claimed by ${layer}`);
-  out(`${c.green("claimed")} ${listSome(targets)} for ${c.bold(layer)} (staged; commit with: sich commit ${layer} -m <msg>)`);
+  out(`${c.green("claimed")} ${listSome(targets)} for ${c.bold(layer)} -> ${manifestRel(layer)}`);
+  out(`hidden from base -> ${excludeFileShown(ctx.base)}`);
+  note(`staged in ${layer}; commit with: sich commit ${layer} -m <msg>`);
   return 0;
 }
 
@@ -160,7 +163,9 @@ export function cmdRm(ctx: Ctx, args: string[]): number {
   syncExcludes(ctx);
   git(repo, ["add", "-f", "--", manifestRel(layer)]);
 
-  out(`${c.green("released")} ${listSome(remove)} from ${c.bold(layer)} (staged; commit with: sich commit ${layer} -m <msg>)`);
+  out(`${c.green("released")} ${listSome(remove)} from ${c.bold(layer)} -> ${manifestRel(layer)}`);
+  out(`no longer hidden from base -> ${excludeFileShown(ctx.base)}`);
+  note(`staged in ${layer}; commit with: sich commit ${layer} -m <msg>`);
   note(`${plural(remove.length, "path")} left on disk; they now show as untracked in base (add, delete or .gitignore them)`);
   return 0;
 }

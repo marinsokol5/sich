@@ -352,8 +352,8 @@ describe("8. check and the pre-commit hook", () => {
     // Stale exclude block (check itself does not regenerate).
     const excl = join(".sich", "notes", "info", "exclude");
     sb.write(root, excl, sb.read(root, excl).replace("!/a.md\n", ""));
-    expect(sb.bad(root, "check")).toContain("exclude block of notes is stale");
-    expect(sb.ok(root, "check", "--fix")).toContain("rewrote the exclude block of notes");
+    expect(sb.bad(root, "check")).toContain("stale exclude rules of notes in .sich/notes/info/exclude");
+    expect(sb.ok(root, "check", "--fix")).toContain("rewrote: notes ignores everything except its claims -> .sich/notes/info/exclude");
     expect(sb.read(root, excl)).toContain("!/a.md\n");
     expect(sb.ok(root, "check")).toContain("ok");
   });

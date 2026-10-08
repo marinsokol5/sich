@@ -5,7 +5,7 @@ import { basename, dirname, resolve } from "node:path";
 import { parseArgs } from "../args";
 import { bare, ownerOf } from "../claims";
 import { allClaims, excludeTargets, layerNames, layerRepo, manifestRel, type Ctx } from "../context";
-import { applyExclude } from "../excludes";
+import { applyExclude, describeExclude, excludeFileShown } from "../excludes";
 import { git, splitZ } from "../git";
 import { c, fail, out, plural } from "../ui";
 
@@ -107,9 +107,9 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
     if (!applyExclude(t, false)) continue;
     if (p.flags["--fix"]) {
       applyExclude(t, true);
-      fixed.push(`rewrote the exclude block of ${t.repo.name}`);
+      fixed.push(`rewrote: ${describeExclude(t)}`);
     } else {
-      issues.push(`exclude block of ${t.repo.name} is stale (fix: sich check --fix)`);
+      issues.push(`stale exclude rules of ${t.repo.name} in ${excludeFileShown(t.repo)} (fix: sich check --fix)`);
     }
   }
 

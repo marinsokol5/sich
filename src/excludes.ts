@@ -18,9 +18,10 @@
 // hide L's own nested claim.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { bare, isDirClaim, isInside, samePath, type Claim } from "./claims";
 import { git, type Repo } from "./git";
+import { plural } from "./ui";
 
 export const BLOCK_BEGIN = "# >>> sich: managed, do not edit >>>";
 export const BLOCK_END = "# <<< sich <<<";
@@ -108,6 +109,19 @@ export function excludeFile(repo: Repo): string {
 export interface ExcludeTarget {
   repo: Repo;
   lines: string[];
+}
+
+/** Root-relative path of a repo's info/exclude, for messages. */
+export function excludeFileShown(repo: Repo): string {
+  return relative(repo.workTree, excludeFile(repo));
+}
+
+/** What a target's block does and which file holds it, for messages. */
+export function describeExclude(t: ExcludeTarget): string {
+  const file = excludeFileShown(t.repo);
+  if (t.repo.name !== "base") return `${t.repo.name} ignores everything except its claims -> ${file}`;
+  const claims = t.lines.length - 1; // the first line is /.sich/
+  return `excluded .sich/${claims ? ` and ${plural(claims, "private path")}` : ""} from base -> ${file}`;
 }
 
 /** Write the block if it differs. Returns true if the file was (or would be) changed. */

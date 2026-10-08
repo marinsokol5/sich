@@ -88,8 +88,8 @@ export function cmdNew(ctx: Ctx, args: string[]): number {
     throw e;
   }
 
-  out(`${c.green("created")} layer ${c.bold(layer)} (.sich/${layer}/)`);
-  if (url) out(`origin: ${url}`);
+  out(`${c.green("created")} layer ${c.bold(layer)}: git data -> .sich/${layer}/, claims list -> ${manifestRel(layer)}`);
+  if (url) out(`set origin of ${layer} -> ${url}`);
   note(`next: sich add ${layer} <path>...  then  sich commit ${layer} -m <msg>${url ? `  and  sich push ${layer}` : ""}`);
   return 0;
 }
@@ -146,7 +146,8 @@ export function cmdAttach(ctx: Ctx, args: string[]): number {
       warn(`${url} has no .sich/${layer}.paths; is the layer name right?`);
     }
     syncExcludes(ctx);
-    out(`${c.green("attached")} layer ${c.bold(layer)} from ${url} (branch ${branch}, ${plural(files.length, "file")})`);
+    out(`${c.green("attached")} layer ${c.bold(layer)} from ${url} -> .sich/${layer}/ (branch ${branch})`);
+    out(`checked out ${plural(files.length, "file")}: ${listSome(files)}`);
     return 0;
   } catch (e) {
     cleanup();

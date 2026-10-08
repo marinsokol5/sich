@@ -3,7 +3,7 @@
 import { parseArgs, str } from "../args";
 import { layerNames, requireLayer, type Ctx } from "../context";
 import { git, splitZ } from "../git";
-import { c, fail, note, out, plural } from "../ui";
+import { c, fail, listSome, note, out, plural } from "../ui";
 
 export function cmdCommit(ctx: Ctx, args: string[]): number {
   const p = parseArgs(args, { "-m": "value" }, { "--message": "-m" });
@@ -24,7 +24,7 @@ export function cmdCommit(ctx: Ctx, args: string[]): number {
     }
     git(repo, ["commit", "-q", "-m", message]);
     const sha = git(repo, ["rev-parse", "--short", "HEAD"]).stdout.trim();
-    out(`${c.bold(repo.name)}: committed ${c.yellow(sha)} (${plural(files.length, "file")})`);
+    out(`${c.bold(repo.name)}: committed ${c.yellow(sha)} (${plural(files.length, "file")}): ${listSome(files)}`);
     committed++;
   }
   if (committed === 0 && !named) note("nothing to commit in any layer");
