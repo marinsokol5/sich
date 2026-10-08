@@ -23,7 +23,7 @@ Plain `git` commands only ever see **base** files. Files from other layers never
 
 ## Install
 
-Requires Node ≥ 18 and git ≥ 2.28.
+Requires Node ≥ 22 and git ≥ 2.28.
 Optionally the GitHub CLI (`gh`) 2.x, for `sich new --gh`.
 
 ```sh

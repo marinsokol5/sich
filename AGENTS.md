@@ -30,7 +30,7 @@ every change has to respect.
 
 ## Rules
 
-- **Runtime:** zero runtime dependencies; only Node ≥ 18 built-ins in `src/`.
+- **Runtime:** zero runtime dependencies; only Node ≥ 22 built-ins in `src/`.
   Bun is for bundling and tests only, so no Bun APIs in `src/`.
 - **Git calls:** always through `src/git.ts`.
 - **Ownership:** manifests are the single source of truth. Exclude blocks are

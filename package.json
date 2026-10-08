@@ -29,7 +29,7 @@
     "dist"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=22"
   },
   "scripts": {
     "build": "bun build src/cli.ts --target node --outfile dist/cli.js --define SICH_DEV=${SICH_DEV:-false} && chmod +x dist/cli.js",

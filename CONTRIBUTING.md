@@ -6,7 +6,7 @@ how to test and release, and the caveats every change has to respect.
 ## Development
 
 Building from source needs pnpm, plus [Bun](https://bun.sh) for bundling and
-tests. Running sich itself only needs Node ≥ 18 and git ≥ 2.28.
+tests. Running sich itself only needs Node ≥ 22 and git ≥ 2.28.
 
 ```sh
 git clone https://github.com/marinsokol5/sich.git && cd sich
