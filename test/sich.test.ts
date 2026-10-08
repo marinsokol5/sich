@@ -202,7 +202,11 @@ describe("3. overlapping claims", () => {
     sb.ok(root, "commit", "-m", "keys");
     expect(sb.bad(root, "add", "notes", "docs")).toContain("docs/ contains docs/api.env, claimed by layer keys");
 
-    expect(sb.ok(root, "add", "notes", "docs", "--move")).toContain("moved docs/ from keys");
+    const moved = sb.sich(root, ["add", "notes", "docs", "--move"]);
+    expect(moved.code).toBe(0);
+    expect(moved.stderr).toContain(
+      "warning: moved docs/ from keys: dropped its 1 claim docs/api.env -> .sich/keys.paths; untracked 1 file there",
+    );
     expect(sb.read(root, ".sich/keys.paths")).not.toContain("docs/api.env");
     expect(sb.layerGit(root, "keys", "ls-files", "--cached", "docs")).toBe("");
     expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "docs/api.env", "docs/guide.md"]);

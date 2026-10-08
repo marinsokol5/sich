@@ -117,7 +117,15 @@ export function cmdAdd(ctx: Ctx, args: string[]): number {
           `Rewrite that history and rotate any secrets if that matters.`,
       );
     } else {
-      out(`moved ${m.claim} from ${m.from.name} -> ${manifestRel(m.from.name)} (untracked there; commit with: sich commit ${m.from.name} -m ...)`);
+      const changes = [
+        m.dropClaims.length &&
+          `dropped its ${plural(m.dropClaims.length, "claim")} ${listSome(m.dropClaims)} -> ${manifestRel(m.from.name)}`,
+        m.files.length && `untracked ${plural(m.files.length, "file")} there`,
+      ].filter(Boolean);
+      warn(
+        `moved ${m.claim} from ${m.from.name}: ${changes.join("; ")} ` +
+          `(commit with: sich commit ${m.from.name} -m <msg>)`,
+      );
     }
   }
 
