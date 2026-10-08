@@ -3,7 +3,7 @@
 import { realpathSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { parseArgs } from "../args";
-import { bare, ownerOf } from "../claims";
+import { bare, covers, ownerOf, samePath } from "../claims";
 import {
   allClaims,
   excludeTargets,
@@ -60,13 +60,23 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
   const owner = (f: string) => ownerOf(claims, f, icase);
   const isSich = (f: string) => fold(f).startsWith(".sich/");
 
-  // Same path claimed by two layers.
-  const claimedBy = new Map<string, string[]>();
-  for (const [layer, cs] of claims) {
-    for (const cl of cs) claimedBy.set(fold(bare(cl)), [...(claimedBy.get(fold(bare(cl))) ?? []), layer]);
-  }
-  for (const [path, ls] of claimedBy) {
-    if (ls.length > 1) issues.push(`${path} is claimed by more than one layer: ${ls.join(", ")}`);
+  // Claims of different layers must not overlap: same path, or one inside the
+  // other's directory (`add` refuses both; manifests can still arrive via pull).
+  const flat = [...claims].flatMap(([layer, cs]) => cs.map((claim) => ({ layer, claim })));
+  for (const [i, a] of flat.entries()) {
+    for (const b of flat.slice(i + 1)) {
+      if (a.layer === b.layer) continue;
+      const [x, y] = [fold(a.claim), fold(b.claim)];
+      if (samePath(x, y)) {
+        issues.push(`${bare(a.claim)} is claimed by more than one layer: ${a.layer}, ${b.layer}`);
+      } else if (covers(x, y) || covers(y, x)) {
+        const [outer, inner] = covers(x, y) ? [a, b] : [b, a];
+        issues.push(
+          `${inner.claim} (${inner.layer}) is nested inside ${outer.claim} (${outer.layer}); ` +
+            `claims can't nest across layers (fix: sich rm ${inner.layer} ${shellQuote(inner.claim)})`,
+        );
+      }
+    }
   }
 
   // Same file tracked by two layers, or tracked by a layer that doesn't own it.

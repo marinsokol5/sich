@@ -11,11 +11,12 @@
 // Emitting from a tree (depth first) guarantees every "/dir/*" precedes the "!"
 // lines of that dir's children, and dedupes shared parents for free.
 //
-// Finally other layers' claims are appended as plain excludes. Last match wins,
-// so a more specific claim of another layer nested inside one of L's directory
-// claims is carved out ("most specific wins"). Other layers' claims that are an
-// ancestor of (or equal to) one of L's claims are skipped: excluding them would
-// hide L's own nested claim.
+// Finally other layers' claims are appended as plain excludes. Claims can't nest
+// across layers (`add` refuses it, `check` flags it), so this is only a safety net
+// for manifests that arrive nested anyway (e.g. via pull): last match wins, so
+// another layer's claim inside one of L's directories is carved out of L. Other
+// layers' claims that are an ancestor of (or equal to) one of L's claims are
+// skipped: excluding them would hide L's own claim.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";

@@ -7,7 +7,6 @@ import {
   isDirClaim,
   isInside,
   normalizeClaims,
-  ownerOf,
   readManifest,
   samePath,
   storable,
@@ -16,6 +15,7 @@ import {
 } from "../claims";
 import {
   allClaims,
+  ignoresCase,
   layerNames,
   layerRepo,
   manifestPath,
@@ -34,8 +34,8 @@ interface Move {
   claim: Claim;
   /** Files to untrack in `from`. */
   files: string[];
-  /** Drop this exact claim from `from`'s manifest. */
-  dropClaim?: Claim;
+  /** Claims to drop from `from`'s manifest (empty for base). */
+  dropClaims: Claim[];
 }
 
 export function cmdAdd(ctx: Ctx, args: string[]): number {
@@ -46,6 +46,8 @@ export function cmdAdd(ctx: Ctx, args: string[]): number {
   const repo = requireLayer(ctx, layer);
   const claims = allClaims(ctx);
   const own = claims.get(layer) ?? [];
+  const icase = ignoresCase(ctx);
+  const fold = (s: string) => (icase ? s.toLowerCase() : s);
 
   const targets: Claim[] = [];
   for (const input of inputs) {
@@ -70,33 +72,42 @@ export function cmdAdd(ctx: Ctx, args: string[]): number {
       if (!move) {
         fail(`${t} is tracked by base (${listSome(inBase, 3)}); use --move to move it into ${layer}`);
       }
-      moves.push({ from: ctx.base, claim: t, files: inBase });
+      moves.push({ from: ctx.base, claim: t, files: inBase, dropClaims: [] });
     }
     for (const other of layerNames(ctx)) {
       if (other === layer) continue;
       const theirs = claims.get(other) ?? [];
-      const same = theirs.find((cl) => samePath(cl, t));
-      // Files the other layer tracks here, unless they belong to a more specific
-      // claim of theirs nested inside t (most specific claim wins, so that's fine).
-      const tracked = trackedUnder(layerRepo(ctx, other), [t]).filter((f) => {
-        const mine = ownerOf(new Map([[other, theirs]]), f)?.claim;
-        return !(mine && isInside(mine, t));
-      });
-      if (!same && tracked.length === 0) continue;
-      if (!move) {
-        const why = same ? `claimed by layer ${other}` : `tracked by layer ${other}`;
-        fail(`${t} is ${why}; use --move to move it into ${layer}`);
+      // Claims never nest across layers: a path inside another layer's directory
+      // claim is refused outright, even with --move...
+      const outer = theirs.find((cl) => isDirClaim(cl) && isInside(fold(t), fold(cl)));
+      if (outer) {
+        fail(
+          `${t} is inside ${outer}, claimed by layer ${other}; claims can't nest across layers ` +
+            `(to move all of it: sich add ${layer} ${outer} --move)`,
+        );
       }
-      moves.push({ from: layerRepo(ctx, other), claim: t, files: tracked, dropClaim: same });
+      // ...while its claims at or inside this path are taken over whole with --move.
+      const inner = theirs.filter((cl) => covers(fold(t), fold(cl)));
+      const tracked = trackedUnder(layerRepo(ctx, other), [t]);
+      if (inner.length === 0 && tracked.length === 0) continue;
+      if (!move) {
+        const why = inner.some((cl) => samePath(fold(cl), fold(t)))
+          ? `is claimed by layer ${other}`
+          : inner.length
+            ? `contains ${listSome(inner, 3)}, claimed by layer ${other}`
+            : `is tracked by layer ${other}`;
+        fail(`${t} ${why}; use --move to move it into ${layer}`);
+      }
+      moves.push({ from: layerRepo(ctx, other), claim: t, files: tracked, dropClaims: inner });
     }
   }
 
   for (const m of moves) {
     if (m.files.length) git(m.from, ["rm", "--cached", "-q", "--", ...m.files]);
-    if (m.dropClaim) {
+    if (m.dropClaims.length) {
       const file = manifestPath(ctx, m.from.name);
       const man = readManifest(file, m.from.name);
-      writeManifest(file, { ...man, claims: man.claims.filter((cl) => cl !== m.dropClaim) });
+      writeManifest(file, { ...man, claims: man.claims.filter((cl) => !m.dropClaims.includes(cl)) });
       git(m.from, ["add", "-f", "--", manifestRel(m.from.name)]);
     }
     if (m.from.name === "base") {
@@ -172,19 +183,8 @@ export function cmdRm(ctx: Ctx, args: string[]): number {
   git(repo, ["add", "-f", "--", manifestRel(layer)]);
 
   out(`${c.green("released")} ${listSome(remove)} from ${c.bold(layer)} -> ${manifestRel(layer)}`);
-  // A released path nested in another layer's directory claim goes to that layer, not base.
-  const after = allClaims(ctx);
-  const toBase = remove.filter((cl) => {
-    const heir = ownerOf(after, bare(cl));
-    if (heir) {
-      warn(`${cl} is inside ${heir.claim}, claimed by ${heir.layer}: it now belongs to ${heir.layer} (and goes into its next commit)`);
-    }
-    return !heir;
-  });
-  if (toBase.length) out(`no longer hidden from base -> ${excludeFileShown(ctx.base)}`);
+  out(`no longer hidden from base -> ${excludeFileShown(ctx.base)}`);
   note(`staged in ${layer}; commit with: sich commit ${layer} -m <msg>`);
-  if (toBase.length) {
-    note(`${plural(toBase.length, "path")} left on disk; they now show as untracked in base (add, delete or .gitignore them)`);
-  }
+  note(`${plural(remove.length, "path")} left on disk; they now show as untracked in base (add, delete or .gitignore them)`);
   return 0;
 }

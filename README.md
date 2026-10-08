@@ -82,7 +82,7 @@ Global: `-C <dir>` (run as if in `<dir>`), `-h/--help` (also `sich <cmd> --help`
 | `sich init` | Creates `.sich/`, writes the base exclude block, installs the base pre-commit hook. If a `pre-commit` hook already exists or `core.hooksPath` is set, it prints the one line to add instead. Idempotent. |
 | `sich new <layer> [--remote <url> \| --gh [name]]` | Creates a layer with an empty manifest and an initial commit. `--gh` runs `gh repo create <name> --private` (default name `<base-repo>-<layer>`) and sets `origin` to its SSH URL. `SICH_GH` overrides the `gh` binary. |
 | `sich attach <layer> <url>` | Collaborator flow: fetches the layer and checks out its default branch into the working tree. Refuses to overwrite existing files. |
-| `sich add <layer> <path...> [--move]` | Claims files or directories (relative to the current directory) and stages them in the layer. Refuses paths tracked by base or owned by another layer; `--move` untracks them from the old owner first. |
+| `sich add <layer> <path...> [--move]` | Claims files or directories (relative to the current directory) and stages them in the layer. Refuses paths tracked by base or owned by another layer; `--move` untracks them from the old owner first (including that layer's claims inside a claimed folder). Claims can't nest across layers: a path inside another layer's claimed folder is always refused. |
 | `sich rm <layer> <path...>` | Drops exact claims and untracks them in the layer. Files stay on disk (they now show as untracked in base, or belong to another layer whose directory claim contains them; sich warns). |
 | `sich which <path>` | Prints the owner: a layer (`(claimed, not yet committed)` if not tracked yet), `base`, `ignored`, or `untracked`. |
 | `sich ls [layer]` | Each layer's claims and tracked files. |
@@ -140,9 +140,11 @@ block is left alone) and regenerates it on every command:
 - layer `L`: a whitelist. `/*` ignores everything, then each claim is re-included
   along with its parent chain (git can't re-include a file inside an excluded
   directory), e.g. `a/b/c.md` becomes `!/a/` `/a/*` `!/a/b/` `/a/b/*` `!/a/b/c.md`.
-  Then other layers' claims are appended as plain excludes, so nested claims
-  work: if `notes` owns `docs/` and `keys` owns `docs/api.env`, the most
-  specific claim wins.
+
+Claims never nest across layers: if `notes` owns `docs/`, no other layer can
+claim `docs/api.env` (and `keys` owning `docs/api.env` stops `notes` from
+claiming `docs/` without `--move`, which takes the whole folder). Two files in
+the same folder can still belong to different layers.
 
 Because each layer only "sees" its claims, `git add -A` in a layer is safe, and
 new files created inside a claimed directory automatically belong to that layer.

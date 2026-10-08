@@ -166,59 +166,58 @@ describe("3. overlapping claims", () => {
     expect(baseStatus(root)).toEqual(["a/b/z.md"]);
   });
 
-  test("nested claims across layers: most specific wins", () => {
+  test("files in the same folder can belong to different layers", () => {
     const root = setup("notes", "keys");
     sb.write(root, "docs/guide.md", "g\n");
     sb.write(root, "docs/api.env", "KEY=1\n");
-    sb.write(root, "docs/deep/more.md", "m\n");
-    sb.ok(root, "add", "notes", "docs");
-    // notes now tracks docs/api.env, so keys must --move it.
-    expect(sb.bad(root, "add", "keys", "docs/api.env")).toContain("tracked by layer notes");
-    expect(sb.ok(root, "add", "keys", "docs/api.env", "--move")).toContain("moved docs/api.env from notes");
-
-    expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "docs/deep/more.md", "docs/guide.md"]);
+    sb.write(root, "docs/public.md", "p\n");
+    sb.ok(root, "add", "notes", "docs/guide.md");
+    sb.ok(root, "add", "keys", "docs/api.env");
+    expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "docs/guide.md"]);
     expect(layerStatus(root, "keys")).toEqual([".sich/keys.paths", "docs/api.env"]);
-    expect(baseStatus(root)).toEqual([]);
-    expect(ignoredIn(root, "notes", "docs/api.env")).toBe(true);
-    expect(ignoredIn(root, "keys", "docs/guide.md")).toBe(true);
-    expect(ignoredIn(root, "keys", "docs/api.env")).toBe(false);
+    expect(baseStatus(root)).toEqual(["docs/public.md"]);
     expect(sb.ok(root, "which", "docs/api.env").trim()).toBe("keys");
     expect(sb.ok(root, "which", "docs/guide.md").trim()).toBe("notes");
-    expect(sb.ok(root, "which", "docs/later.md").trim()).toBe("notes (claimed, not yet committed)");
-    sb.ok(root, "commit", "-m", "both");
-    expect(sb.ok(root, "check")).toContain("ok");
-
-    // New files under docs/ go to notes, never to keys or base.
-    sb.write(root, "docs/new.md", "n\n");
-    expect(layerStatus(root, "notes")).toEqual(["docs/new.md"]);
-    expect(layerStatus(root, "keys")).toEqual([]);
-    expect(baseStatus(root)).toEqual([]);
   });
 
-  test("an outer directory claim may be added around another layer's claim", () => {
+  test("claims can't nest across layers, even with --move", () => {
+    const root = setup("notes", "keys");
+    sb.write(root, "docs/guide.md", "g\n");
+    sb.write(root, "docs/api.env", "KEY=1\n");
+    sb.ok(root, "add", "notes", "docs");
+    for (const flags of [[], ["--move"]]) {
+      expect(sb.bad(root, "add", "keys", "docs/api.env", ...flags)).toContain(
+        "docs/api.env is inside docs/, claimed by layer notes; claims can't nest across layers",
+      );
+    }
+    expect(sb.read(root, ".sich/keys.paths")).not.toContain("docs");
+    expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "docs/api.env", "docs/guide.md"]);
+  });
+
+  test("an outer folder takes over another layer's claims inside it only with --move", () => {
     const root = setup("notes", "keys");
     sb.write(root, "docs/guide.md", "g\n");
     sb.write(root, "docs/api.env", "KEY=1\n");
     sb.ok(root, "add", "keys", "docs/api.env");
     sb.ok(root, "commit", "-m", "keys");
-    sb.ok(root, "add", "notes", "docs");
-    expect(layerFiles(root, "notes")).toEqual([".sich/notes.paths", "docs/guide.md"]);
-    expect(layerStatus(root, "keys")).toEqual([]);
+    expect(sb.bad(root, "add", "notes", "docs")).toContain("docs/ contains docs/api.env, claimed by layer keys");
+
+    expect(sb.ok(root, "add", "notes", "docs", "--move")).toContain("moved docs/ from keys");
+    expect(sb.read(root, ".sich/keys.paths")).not.toContain("docs/api.env");
+    expect(sb.layerGit(root, "keys", "ls-files", "--cached", "docs")).toBe("");
+    expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "docs/api.env", "docs/guide.md"]);
+    sb.ok(root, "commit", "-m", "moved");
+    expect(sb.ok(root, "check")).toContain("ok");
   });
 
-  test("releasing a nested claim warns that the enclosing layer now owns it", () => {
+  test("check flags claims that arrive nested (e.g. via pull)", () => {
     const root = setup("notes", "keys");
     sb.write(root, "docs/guide.md", "g\n");
-    sb.write(root, "docs/api.env", "KEY=1\n");
-    sb.ok(root, "add", "keys", "docs/api.env");
     sb.ok(root, "add", "notes", "docs");
-    sb.ok(root, "commit", "-m", "both");
-    const r = sb.sich(root, ["rm", "keys", "docs/api.env"]);
-    expect(r.code).toBe(0);
-    expect(r.stderr).toContain("docs/api.env is inside docs/, claimed by notes: it now belongs to notes");
-    expect(r.stdout).not.toContain("untracked in base");
-    expect(layerStatus(root, "notes")).toEqual(["docs/api.env"]);
-    expect(baseStatus(root)).toEqual([]);
+    sb.write(root, ".sich/keys.paths", "docs/api.env\n");
+    expect(sb.bad(root, "check")).toContain(
+      "docs/api.env (keys) is nested inside docs/ (notes); claims can't nest across layers (fix: sich rm keys docs/api.env)",
+    );
   });
 });
 
@@ -314,7 +313,7 @@ function published() {
   sb.write(root, "docs/api.env", "KEY=1\n");
   sb.write(root, ".env", "TOKEN=1\n");
   sb.ok(root, "add", "keys", ".env", "docs/api.env");
-  sb.ok(root, "add", "notes", "NOTES.md", "roadmap", "docs");
+  sb.ok(root, "add", "notes", "NOTES.md", "roadmap", "docs/guide.md");
   sb.ok(root, "commit", "-m", "private stuff");
   const pushed = sb.ok(root, "push");
   expect(pushed).toContain("push -u origin main");

@@ -59,7 +59,9 @@ this working tree. Refuses to overwrite existing files.`,
 Claims paths (files or directories, relative to the current directory) for a
 layer, then stages them and the manifest in that layer (no commit).
 Refuses paths tracked by base or owned by another layer unless --move is given;
---move untracks them from the previous owner (old versions stay in its history).`,
+--move untracks them from the previous owner (old versions stay in its history).
+Claims can't nest across layers: a path inside another layer's claimed directory
+is always refused (move the whole directory instead).`,
 
   rm: `usage: sich rm <layer> <path...>
 
