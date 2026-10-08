@@ -1,34 +1,51 @@
 export const MAIN_HELP = `sich - private git layers that share one working tree with a normal repo
 
+  base    your normal repo (.git), usually public
+  layer   a private repo in .sich/<layer>/ with its own remote and access list
+  claim   a file or folder a layer owns; base and other layers never see it
+
 usage: sich [-C <dir>] <command> [args]
        sich [-C <dir>] <layer|base> <git args...>
 
 setup
-  init                         set up .sich/, base excludes and the pre-commit guard
+  init                              set up .sich/, base excludes, commit guard
   new <layer> [--remote <url> | --gh [name]]
-                               create a private layer
-  attach <layer> <url>         join an existing layer (collaborators)
+                                    create a layer (--gh: private GitHub repo)
+  attach <layer> <url>              join an existing layer (collaborators)
 
 ownership
-  add <layer> <path...> [--move]   claim paths for a layer (stages them)
-  rm <layer> <path...>             release claims (files stay on disk)
-  which <path>                     show who owns a path
-  ls [layer]                       list claims and tracked files
+  add <layer> <path...> [--move]    claim files/folders for a layer, stage them
+                                    (--move: take them from base/another layer)
+  rm <layer> <path...>              release claims; files stay on disk
+  which <path>                      show who owns a path
+  ls [layer]                        list claims and tracked files
 
 everyday
-  status [-v] [--fetch]        one line per repo: branch, ahead/behind, changes
-  commit [layer...] -m <msg>   commit layers that have changes
-  pull | push | sync [repo...] pull --rebase / push / both, base + all layers
-  check [--fix] [--staged]     find ownership problems (the pre-commit hook runs this)
+  status [-v] [--fetch]             per repo: branch, ahead/behind, changes
+  commit [layer...] -m <msg>        commit changed layers (base: use git commit)
+  pull [repo...]                    pull --rebase base + all layers (or named)
+  push [repo...]                    push base + all layers (or named)
+  sync [repo...]                    pull, then push
+  check [--fix] [--staged]          find leaks and ownership problems
+                                    (--staged: what the pre-commit hook runs)
 
 passthrough
-  <layer> <git args...>        run git against a layer, e.g. sich notes log
-  base <git args...>           run git against the base repo
+  <layer> <git args...>             run git in a layer, e.g. sich notes log
+  base <git args...>                run git in the base repo
 
 options
-  -C <dir>        run as if started in <dir>
-  -h, --help      show help (also: sich <command> --help)
-  -V, --version   print version
+  -C <dir>                          run as if started in <dir>
+  -h, --help                        show help (also: sich <command> --help)
+  -V, --version                     print version
+
+environment
+  SICH_BIN                          sich binary the pre-commit hook runs
+                                    (default: sich on PATH)
+  SICH_GH                           gh binary for new --gh (default: gh)
+  NO_COLOR                          disable colors
+
+Layer names match ^[a-z0-9][a-z0-9._-]*$; base and command names are reserved.
+Claims can't nest across layers.
 `;
 
 export const COMMAND_HELP: Record<string, string> = {
