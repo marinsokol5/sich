@@ -1,3 +1,5 @@
+// sich init: .sich/, the base exclude block and the base pre-commit hook.
+
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { excludeTargets, isInitialized, type Ctx } from "../context";
@@ -6,11 +8,12 @@ import { git } from "../git";
 import { parseArgs } from "../args";
 import { c, fail, out } from "../ui";
 
-const HOOK_MARKER = "sich check --staged";
+/** Matches HOOK_LINE and a plain `sich check --staged` the user wired in themselves. */
+const HOOK_MARKER = /sich\S*\s+check --staged/;
 const HOOK_HEADER = "# Installed by sich:";
 
-/** For hooks sich doesn't own. Fails closed: a missing `sich` exits 127 and blocks the commit. */
-export const HOOK_LINE = "sich check --staged || exit 1";
+/** For hooks sich doesn't own. Fails closed: if `$SICH_BIN`/`sich` is missing it exits 127, blocking the commit. */
+export const HOOK_LINE = '"${SICH_BIN:-sich}" check --staged || exit 1';
 
 /**
  * SICH_BIN overrides which sich the hook runs (default: `sich` on PATH). If it
@@ -59,7 +62,7 @@ function installHook(ctx: Ctx): void {
       }
       return;
     }
-    if (current.includes(HOOK_MARKER)) return; // the user wired sich into their own hook
+    if (HOOK_MARKER.test(current)) return; // the user wired sich into their own hook
     out(`${c.yellow("pre-commit hook exists")} (${shown}); add this line to it:`);
     out(`  ${HOOK_LINE}`);
     return;

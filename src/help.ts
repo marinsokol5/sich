@@ -64,7 +64,8 @@ Refuses paths tracked by base or owned by another layer unless --move is given;
   rm: `usage: sich rm <layer> <path...>
 
 Removes exact claims from a layer and untracks them there. The files stay on
-disk and show up as untracked in base.`,
+disk and show up as untracked in base (or, if another layer's directory claim
+contains them, now belong to that layer).`,
 
   which: `usage: sich which <path>
 
@@ -84,13 +85,16 @@ staged / modified / untracked files.
   commit: `usage: sich commit [layer...] -m <msg>
 
 Stages everything in each target layer (git add -A; the layer's whitelist keeps
-this safe) and commits. Defaults to every layer with changes. Use plain
-'git commit' for base.`,
+this safe) and commits. Files the layer doesn't own (e.g. let in by a '!' rule
+in a .gitignore) are left out with a warning. Defaults to every layer with
+changes. Use plain 'git commit' for base.`,
 
   pull: `usage: sich pull [repo...]
 
 git pull --rebase --autostash in base and every layer (or the named repos,
-'base' allowed). Repos without a remote are skipped. Stops at the first failure.`,
+'base' allowed). Repos without a remote are skipped. Stops at the first failure.
+Refuses to pull a repo if that would overwrite a file it doesn't track, such as
+another layer's (git would do that silently: to it, those files are ignored).`,
 
   push: `usage: sich push [repo...]
 
@@ -107,7 +111,8 @@ Reports: paths claimed or tracked by two layers, base tracking claimed paths or
 .sich/, layers tracking files they don't own, and stale exclude blocks.
   --fix      rewrite stale exclude blocks
   --staged   also fail if base's index stages claimed paths or .sich/
-             (this is what the pre-commit hook runs; silent when all is well)
+             (this is what the pre-commit hook runs; silent when all is well,
+             and a no-op where sich isn't set up, e.g. a linked worktree)
 Exits 1 if any issue remains.`,
 
   help: `usage: sich help [command]`,

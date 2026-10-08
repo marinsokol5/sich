@@ -2,6 +2,24 @@
   "name": "sich",
   "version": "0.1.0",
   "description": "Private git layers sharing one working tree with a normal (public) repo",
+  "keywords": [
+    "git",
+    "cli",
+    "private",
+    "layers",
+    "overlay",
+    "notes",
+    "dotfiles",
+    "gitignore"
+  ],
+  "homepage": "https://github.com/marinsokol5/sich#readme",
+  "bugs": {
+    "url": "https://github.com/marinsokol5/sich/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/marinsokol5/sich.git"
+  },
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -16,7 +34,7 @@
   "scripts": {
     "build": "bun build src/cli.ts --target node --outfile dist/cli.js --define SICH_DEV=${SICH_DEV:-false} && chmod +x dist/cli.js",
     "install:global": "sh scripts/install-global.sh",
-    "prepublishOnly": "SICH_DEV=false pnpm run build",
+    "prepublishOnly": "pnpm run typecheck && SICH_DEV=false pnpm test && SICH_DEV=false pnpm run build",
     "test": "pnpm run build && bun test",
     "typecheck": "tsc --noEmit"
   },

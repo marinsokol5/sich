@@ -1,7 +1,7 @@
 // Integration tests: run the CLI as a subprocess against temp repos with local bare remotes.
 
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, renameSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import pkg from "../package.json";
 import { CLI, managedBlock, Sandbox, statusPaths } from "./helpers";
@@ -26,6 +26,17 @@ const ignoredIn = (root: string, layer: string | null, path: string) => {
   const repoArgs = layer ? [`--git-dir=${join(root, ".sich", layer)}`, `--work-tree=${root}`] : [];
   return sb.run(["git", ...repoArgs, "check-ignore", "-q", path], root).code === 0;
 };
+
+/** True on case-insensitive filesystems (the macOS default). */
+const CASE_INSENSITIVE_FS = (() => {
+  const probe = new Sandbox();
+  try {
+    probe.write(probe.dir, "CaseProbe", "");
+    return existsSync(probe.path("caseprobe"));
+  } finally {
+    probe.cleanup();
+  }
+})();
 
 /** Base repo with sich initialized and the given layers created. */
 function setup(...layers: string[]): string {
@@ -60,8 +71,22 @@ describe("1. init", () => {
     sb.write(root, ".git/hooks/pre-commit", "#!/bin/sh\necho custom\n");
     const out = sb.ok(root, "init");
     expect(out).toContain("add this line");
-    expect(out).toContain("sich check --staged");
+    const line = '"${SICH_BIN:-sich}" check --staged || exit 1';
+    expect(out).toContain(line);
     expect(sb.read(root, ".git/hooks/pre-commit")).toBe("#!/bin/sh\necho custom\n");
+
+    // Once the line is added, init stops asking and the user's hook guards base
+    // (sich is found via SICH_BIN, which the sandbox sets).
+    sb.write(root, ".git/hooks/pre-commit", `#!/bin/sh\necho custom\n${line}\n`);
+    chmodSync(join(root, ".git/hooks/pre-commit"), 0o755);
+    expect(sb.ok(root, "init")).not.toContain("add this line");
+    sb.ok(root, "new", "notes");
+    sb.write(root, "secret.md", "s\n");
+    sb.ok(root, "add", "notes", "secret.md");
+    sb.git(root, "add", "-f", "secret.md");
+    const blocked = sb.run(["git", "commit", "-m", "leak"], root, { PATH: "/usr/bin:/bin" });
+    expect(blocked.code).not.toBe(0);
+    expect(blocked.stdout + blocked.stderr).toContain("staged change to private path secret.md");
 
     const other = sb.repo("other");
     sb.git(other, "config", "core.hooksPath", ".githooks");
@@ -99,6 +124,31 @@ describe("2. claims hide files from base and show them in the layer", () => {
     sb.ok(join(root, "src"), "add", "notes", "private.md");
     expect(sb.read(root, ".sich/notes.paths")).toContain("src/private.md\n");
     expect(baseStatus(root)).toEqual(["src/app.ts"]);
+  });
+
+  test("names the manifest can't hold are refused instead of silently left visible to base", () => {
+    const root = setup("notes");
+    const manifest = sb.read(root, ".sich/notes.paths");
+    for (const name of ["trailing ", " leading", "#hash.md"]) {
+      sb.write(root, name, "x\n");
+      expect(sb.bad(root, "add", "notes", name)).toContain("cannot claim");
+    }
+    expect(sb.read(root, ".sich/notes.paths")).toBe(manifest);
+    expect(layerStatus(root, "notes")).toEqual([]);
+    // Only a leading "#" in the whole path is a problem.
+    sb.write(root, "dir/#ok.md", "x\n");
+    sb.ok(root, "add", "notes", "dir/#ok.md");
+    expect(baseStatus(root)).toHaveLength(3);
+    expect(baseStatus(root)).not.toContain("dir/#ok.md");
+  });
+
+  test.if(CASE_INSENSITIVE_FS)("a mistyped case is claimed as spelled on disk", () => {
+    const root = setup("notes");
+    sb.write(root, "Docs/NOTES.md", "n\n");
+    sb.ok(root, "add", "notes", "docs/notes.md");
+    expect(sb.read(root, ".sich/notes.paths")).toContain("\nDocs/NOTES.md\n");
+    expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "Docs/NOTES.md"]);
+    expect(baseStatus(root)).toEqual([]);
   });
 });
 
@@ -155,6 +205,21 @@ describe("3. overlapping claims", () => {
     expect(layerFiles(root, "notes")).toEqual([".sich/notes.paths", "docs/guide.md"]);
     expect(layerStatus(root, "keys")).toEqual([]);
   });
+
+  test("releasing a nested claim warns that the enclosing layer now owns it", () => {
+    const root = setup("notes", "keys");
+    sb.write(root, "docs/guide.md", "g\n");
+    sb.write(root, "docs/api.env", "KEY=1\n");
+    sb.ok(root, "add", "keys", "docs/api.env");
+    sb.ok(root, "add", "notes", "docs");
+    sb.ok(root, "commit", "-m", "both");
+    const r = sb.sich(root, ["rm", "keys", "docs/api.env"]);
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain("docs/api.env is inside docs/, claimed by notes: it now belongs to notes");
+    expect(r.stdout).not.toContain("untracked in base");
+    expect(layerStatus(root, "notes")).toEqual(["docs/api.env"]);
+    expect(baseStatus(root)).toEqual([]);
+  });
 });
 
 describe("4. moving paths out of base", () => {
@@ -209,6 +274,24 @@ describe("5. gitignored files", () => {
     sb.write(root, ".env", "TOKEN=changed\n");
     expect(layerStatus(root, "keys")).toEqual([".env"]);
     expect(sb.ok(root, "commit", "-m", "rotate")).toContain("keys: committed");
+  });
+
+  test("a .gitignore negation can't make commit take another layer's file", () => {
+    const root = setup("notes", "keys");
+    // "!team.local" outranks every repo's info/exclude, so keys sees notes's file.
+    sb.write(root, ".gitignore", "*.local\n!team.local\n");
+    sb.git(root, "add", ".gitignore");
+    sb.git(root, "commit", "-q", "-m", "ignore");
+    sb.write(root, "team.local", "notes only\n");
+    sb.write(root, "k.env", "K=1\n");
+    sb.ok(root, "add", "notes", "team.local");
+    sb.ok(root, "add", "keys", "k.env");
+
+    const r = sb.sich(root, ["commit", "-m", "both"]);
+    expect(r.code).toBe(0);
+    expect(r.stderr).toContain("keys: left out 1 file it doesn't own: team.local");
+    expect(layerFiles(root, "keys")).toEqual([".sich/keys.paths", "k.env"]);
+    expect(layerFiles(root, "notes")).toEqual([".sich/notes.paths", "team.local"]);
   });
 });
 
@@ -284,6 +367,40 @@ describe("6. collaborator flow", () => {
     expect(sb.read(clone, "NOTES.md")).toBe("local\n");
     expect(existsSync(join(clone, ".sich/notes"))).toBe(false);
   });
+
+  test("attach checks out the remote's default branch; a relative URL is taken from the current directory", () => {
+    const remote = sb.bare("notes.git");
+    const root = setup("notes");
+    sb.write(root, "NOTES.md", "n\n");
+    sb.ok(root, "add", "notes", "NOTES.md");
+    sb.ok(root, "commit", "-m", "notes");
+    sb.ok(root, "notes", "branch", "-m", "trunk");
+    sb.ok(root, "notes", "push", "-q", remote, "trunk");
+    sb.git(remote, "symbolic-ref", "HEAD", "refs/heads/trunk");
+
+    const other = sb.repo("other");
+    sb.write(other, "src/app.ts", "code\n");
+    const out = sb.ok(join(other, "src"), "attach", "notes", "../../remotes/notes.git");
+    expect(out).toContain("(branch trunk)");
+    expect(sb.read(other, "NOTES.md")).toBe("n\n");
+    expect(sb.layerGit(other, "notes", "remote", "get-url", "origin").trim()).toBe(remote);
+    expect(sb.layerGit(other, "notes", "rev-parse", "--abbrev-ref", "@{u}").trim()).toBe("origin/trunk");
+    expect(baseStatus(other)).toEqual(["src/app.ts"]);
+  });
+
+  test("attach fails cleanly for an empty remote and warns about a wrong layer name", () => {
+    const r = published();
+    const clone = sb.repo("clone");
+    const empty = sb.bare("empty.git");
+    expect(sb.bad(clone, "attach", "notes", empty)).toContain("has no branch 'main'");
+    expect(existsSync(join(clone, ".sich/notes"))).toBe(false);
+    expect(sb.bad(clone, "attach", "notes", sb.path("missing.git"))).toContain("cannot fetch");
+    expect(existsSync(join(clone, ".sich/notes"))).toBe(false);
+
+    const wrong = sb.sich(clone, ["attach", "jotter", r.notesRemote]);
+    expect(wrong.code).toBe(0);
+    expect(wrong.stderr).toContain("has no .sich/jotter.paths; is the layer name right?");
+  });
 });
 
 describe("7. pull", () => {
@@ -312,6 +429,58 @@ describe("7. pull", () => {
     sb.ok(a, "sync");
     sb.ok(b, "pull", "notes");
     expect(sb.read(b, "ideas/two.md")).toBe("two\n");
+  });
+
+  test("pull refuses to overwrite files the repo doesn't track (git would, since they're ignored)", () => {
+    const r = published();
+    const a = attachClone("a", r);
+    const b = attachClone("b", r);
+
+    // A teammate claims TODO.md; here TODO.md is a local, untracked file.
+    sb.write(b, "TODO.md", "theirs\n");
+    sb.ok(b, "add", "notes", "TODO.md");
+    sb.ok(b, "commit", "notes", "-m", "todo");
+    sb.ok(b, "push", "notes");
+    sb.write(a, "TODO.md", "mine\n");
+    const refused = sb.bad(a, "pull");
+    expect(refused).toContain("notes: pull would overwrite 1 local path it doesn't track: TODO.md");
+    expect(refused).toContain("pull failed in notes (would overwrite local files)");
+    expect(sb.read(a, "TODO.md")).toBe("mine\n");
+    renameSync(join(a, "TODO.md"), join(a, "TODO.mine.md"));
+    sb.ok(a, "pull");
+    expect(sb.read(a, "TODO.md")).toBe("theirs\n");
+
+    // Someone commits a public file at a path a layer owns here: base must not clobber it.
+    sb.write(a, "NOTES.md", "uncommitted private edit\n");
+    sb.git(sb.dir, "clone", "-q", r.baseRemote, "plain");
+    const plain = sb.path("plain");
+    sb.write(plain, "NOTES.md", "public\n");
+    sb.git(plain, "add", "NOTES.md");
+    sb.git(plain, "commit", "-q", "-m", "public notes");
+    sb.git(plain, "push", "-q");
+    expect(sb.bad(a, "pull", "base")).toContain("base: pull would overwrite 1 local path it doesn't track: NOTES.md (notes)");
+    expect(sb.read(a, "NOTES.md")).toBe("uncommitted private edit\n");
+    expect(sb.git(a, "log", "-1", "--format=%s")).toBe("gitignore\n");
+  });
+
+  test("status --fetch shows commits waiting on the remotes; a failed fetch only warns", () => {
+    const r = published();
+    const a = attachClone("a", r);
+    const b = attachClone("b", r);
+    sb.write(b, "NOTES.md", "edited\n");
+    sb.ok(b, "commit", "-m", "edit");
+    sb.ok(b, "push", "notes");
+
+    expect(sb.ok(a, "status")).toMatch(/^notes\s+main\s+origin\/main up to date\s+clean$/m);
+    const fetched = sb.ok(a, "status", "--fetch");
+    expect(fetched).toMatch(/^notes\s+main\s+origin\/main behind 1\s+clean$/m);
+    expect(fetched).toMatch(/^base\s+main\s+origin\/main up to date\s+clean$/m);
+
+    sb.layerGit(a, "keys", "remote", "set-url", "origin", sb.path("gone.git"));
+    const warned = sb.sich(a, ["status", "--fetch"]);
+    expect(warned.code).toBe(0);
+    expect(warned.stderr).toContain("warning: keys: fetch failed");
+    expect(warned.stdout).toMatch(/^keys\s+main/m);
   });
 
   test("repos without a remote are skipped; failures stop with the repo name", () => {
@@ -443,6 +612,31 @@ describe("8. check and the pre-commit hook", () => {
     const r = sb.run(["git", "commit", "-q", "-m", "move plan out"], root, { PATH });
     expect(r.stdout + r.stderr).toBe("");
     expect(r.code).toBe(0);
+  });
+
+  test("with core.ignorecase the hook catches a claimed path staged under another spelling", () => {
+    const root = setup("notes");
+    sb.write(root, "Docs/NOTES.md", "n\n");
+    sb.ok(root, "add", "notes", "Docs");
+    // What `git add -f docs` can produce on a case-insensitive filesystem.
+    const blob = sb.git(root, "hash-object", "-w", "Docs/NOTES.md").trim();
+    sb.git(root, "update-index", "--add", "--cacheinfo", `100644,${blob},docs/NOTES.md`);
+    sb.git(root, "config", "core.ignorecase", "true");
+    const blocked = sb.run(["git", "commit", "-q", "-m", "leak"], root);
+    expect(blocked.code).not.toBe(0);
+    expect(blocked.stdout + blocked.stderr).toContain("staged change to private path docs/NOTES.md (claimed by notes)");
+  });
+
+  test("the hook passes in a linked worktree, which has no .sich/", () => {
+    const root = setup("notes");
+    sb.git(root, "worktree", "add", "-q", sb.path("wt"));
+    const wt = sb.path("wt");
+    sb.write(wt, "x.md", "x\n");
+    sb.git(wt, "add", "x.md");
+    const r = sb.run(["git", "commit", "-q", "-m", "from worktree"], wt);
+    expect(r.stdout + r.stderr).toBe("");
+    expect(r.code).toBe(0);
+    expect(sb.bad(wt, "check")).toContain("not initialized");
   });
 });
 

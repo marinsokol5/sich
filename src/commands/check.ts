@@ -4,10 +4,20 @@ import { realpathSync } from "node:fs";
 import { basename, dirname, resolve } from "node:path";
 import { parseArgs } from "../args";
 import { bare, ownerOf } from "../claims";
-import { allClaims, excludeTargets, layerNames, layerRepo, manifestRel, type Ctx } from "../context";
+import {
+  allClaims,
+  excludeTargets,
+  ignoresCase,
+  isInitialized,
+  layerNames,
+  layerRepo,
+  manifestRel,
+  requireInit,
+  type Ctx,
+} from "../context";
 import { applyExclude, describeExclude, excludeFileShown } from "../excludes";
 import { git, splitZ } from "../git";
-import { c, fail, out, plural } from "../ui";
+import { c, fail, out, plural, shellQuote } from "../ui";
 
 /**
  * Inside a pre-commit hook git points GIT_INDEX_FILE at the index being committed
@@ -31,18 +41,29 @@ function hookIndexEnv(ctx: Ctx): Record<string, string> {
 export function cmdCheck(ctx: Ctx, args: string[]): number {
   const p = parseArgs(args, { "--fix": "bool", "--staged": "bool" });
   if (p.positionals.length) fail("usage: sich check [--fix] [--staged]");
+  if (!isInitialized(ctx)) {
+    // The hook also runs in repos (or linked worktrees) without .sich/: nothing is
+    // claimed there, so nothing can leak.
+    if (p.flags["--staged"]) return 0;
+    requireInit(ctx);
+  }
   const issues: string[] = [];
   const fixed: string[] = [];
   const hints: string[] = [];
   const claims = allClaims(ctx);
   const layers = layerNames(ctx);
-  const everyClaim = [...claims.values()].flat();
   const indexEnv = hookIndexEnv(ctx);
+  // On case-insensitive filesystems `git add -f docs` stages a claimed Docs/x.md
+  // under the spelling typed, so match ownership the way git matches excludes.
+  const icase = ignoresCase(ctx);
+  const fold = (s: string) => (icase ? s.toLowerCase() : s);
+  const owner = (f: string) => ownerOf(claims, f, icase);
+  const isSich = (f: string) => fold(f).startsWith(".sich/");
 
   // Same path claimed by two layers.
   const claimedBy = new Map<string, string[]>();
   for (const [layer, cs] of claims) {
-    for (const cl of cs) claimedBy.set(bare(cl), [...(claimedBy.get(bare(cl)) ?? []), layer]);
+    for (const cl of cs) claimedBy.set(fold(bare(cl)), [...(claimedBy.get(fold(bare(cl))) ?? []), layer]);
   }
   for (const [path, ls] of claimedBy) {
     if (ls.length > 1) issues.push(`${path} is claimed by more than one layer: ${ls.join(", ")}`);
@@ -57,12 +78,12 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
     }
   }
   for (const [f, ls] of trackedBy) {
-    const owner = ownerOf(claims, f)?.layer;
+    const by = owner(f)?.layer;
     if (ls.length > 1) {
-      issues.push(`${f} is tracked by more than one layer: ${ls.join(", ")}${owner ? ` (owner: ${owner})` : ""}`);
-    } else if (owner !== ls[0]) {
-      const why = owner ? `it belongs to ${owner}` : "none of its claims cover it";
-      issues.push(`${ls[0]} tracks ${f} but ${why} (fix: sich ${ls[0]} rm --cached -- ${f})`);
+      issues.push(`${f} is tracked by more than one layer: ${ls.join(", ")}${by ? ` (owner: ${by})` : ""}`);
+    } else if (by !== ls[0]) {
+      const why = by ? `it belongs to ${by}` : "none of its claims cover it";
+      issues.push(`${ls[0]} tracks ${f} but ${why} (fix: sich ${ls[0]} rm --cached -- ${shellQuote(f)})`);
     }
   }
 
@@ -74,32 +95,31 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
       git(ctx.base, ["diff", "--cached", "--name-only", "--no-renames", "--diff-filter=d", "-z"], { env: indexEnv })
         .stdout,
     );
-    const leaks = staged.filter((f) => f.startsWith(".sich/") || ownerOf(claims, f));
+    const leaks = staged.filter((f) => isSich(f) || owner(f));
     for (const f of leaks) {
-      const owner = ownerOf(claims, f);
-      issues.push(`base has a staged change to private path ${f}${owner ? ` (claimed by ${owner.layer})` : ""}`);
+      const by = owner(f);
+      issues.push(`base has a staged change to private path ${f}${by ? ` (claimed by ${by.layer})` : ""}`);
       reported.add(f);
     }
     if (leaks.length) {
-      hints.push(`unstage with: git restore --staged -- ${leaks.join(" ")}`);
+      hints.push(`unstage with: git restore --staged -- ${leaks.map(shellQuote).join(" ")}`);
     }
   }
 
-  // Base tracking claimed paths.
-  if (everyClaim.length) {
-    for (const f of splitZ(git(ctx.base, ["ls-files", "-z", "--", ...everyClaim], { env: indexEnv }).stdout)) {
-      if (reported.has(f)) continue;
-      const owner = ownerOf(claims, f);
-      if (owner) issues.push(`base tracks ${f}, which is claimed by ${owner.layer} (fix: git rm --cached -- ${f})`);
+  // Base tracking claimed paths or sich's own files. Scans the whole index rather
+  // than passing claims as pathspecs, which would match case-sensitively.
+  let sichFiles = 0;
+  for (const f of splitZ(git(ctx.base, ["ls-files", "-z"], { env: indexEnv }).stdout)) {
+    if (reported.has(f)) continue;
+    if (isSich(f)) {
+      sichFiles++;
+      continue;
     }
+    const by = owner(f);
+    if (by) issues.push(`base tracks ${f}, which is claimed by ${by.layer} (fix: git rm --cached -- ${shellQuote(f)})`);
   }
-
-  // Base tracking sich's own files.
-  const sichFiles = splitZ(git(ctx.base, ["ls-files", "-z", "--", ".sich/"], { env: indexEnv }).stdout).filter(
-    (f) => !reported.has(f),
-  );
-  if (sichFiles.length) {
-    issues.push(`base tracks ${plural(sichFiles.length, "file")} under .sich/ (fix: git rm -r --cached -- .sich/)`);
+  if (sichFiles) {
+    issues.push(`base tracks ${plural(sichFiles, "file")} under .sich/ (fix: git rm -r --cached -- .sich/)`);
   }
 
   // Generated exclude blocks out of date.

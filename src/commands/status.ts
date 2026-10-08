@@ -116,4 +116,3 @@ export function cmdStatus(ctx: Ctx, args: string[]): number {
   });
   return 0;
 }
-

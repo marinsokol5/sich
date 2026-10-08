@@ -1,10 +1,11 @@
 // sich new / sich attach: creating a layer's git dir inside .sich/.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, rmSync, writeFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, rmSync, writeFileSync } from "node:fs";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import { parseArgs, str } from "../args";
 import {
+  collisions,
   layerRepo,
   manifestPath,
   manifestRel,
@@ -32,6 +33,16 @@ function createGitDir(ctx: Ctx, layer: string): Repo {
   return repo;
 }
 
+/**
+ * A remote given as a relative local path (e.g. ../notes.git) made absolute: git would
+ * resolve it against whatever directory it later runs in, not where it was typed.
+ */
+function remoteUrl(ctx: Ctx, url: string): string {
+  if (isAbsolute(url) || /^[a-z][a-z0-9+.-]*:\/\//i.test(url)) return url;
+  const local = resolve(ctx.cwd, url);
+  return existsSync(local) ? local : url;
+}
+
 /** Name of the base repo: last segment of origin's URL, else the folder name. */
 function baseRepoName(ctx: Ctx): string {
   const url = git(ctx.base, ["config", "--get", "remote.origin.url"], { allowFail: true }).stdout.trim();
@@ -57,7 +68,8 @@ export function cmdNew(ctx: Ctx, args: string[]): number {
   const p = parseArgs(args, { "--remote": "value", "--gh": "optional" });
   const [layer, ...extra] = p.positionals;
   if (!layer || extra.length) fail("usage: sich new <layer> [--remote <url> | --gh [name]]");
-  const remote = str(p, "--remote");
+  const given = str(p, "--remote");
+  const remote = given && remoteUrl(ctx, given);
   const gh = p.flags["--gh"];
   if (remote && gh) fail("use either --remote or --gh, not both");
   assertFree(ctx, layer);
@@ -94,31 +106,11 @@ export function cmdNew(ctx: Ctx, args: string[]): number {
   return 0;
 }
 
-/** Paths in `tree` that already exist on disk (or collide with an existing non-directory parent). */
-function collisions(ctx: Ctx, paths: string[]): string[] {
-  const hits = new Set<string>();
-  const kind = (rel: string) => {
-    try {
-      return lstatSync(join(ctx.root, rel)).isDirectory() ? "dir" : "file";
-    } catch {
-      return null;
-    }
-  };
-  for (const p of paths) {
-    if (kind(p)) hits.add(p);
-    const segs = p.split("/");
-    for (let i = 1; i < segs.length; i++) {
-      const parent = segs.slice(0, i).join("/");
-      if (kind(parent) === "file") hits.add(parent);
-    }
-  }
-  return [...hits].sort();
-}
-
 export function cmdAttach(ctx: Ctx, args: string[]): number {
   const p = parseArgs(args, {});
-  const [layer, url, ...extra] = p.positionals;
-  if (!layer || !url || extra.length) fail("usage: sich attach <layer> <url>");
+  const [layer, given, ...extra] = p.positionals;
+  if (!layer || !given || extra.length) fail("usage: sich attach <layer> <url>");
+  const url = remoteUrl(ctx, given);
   assertFree(ctx, layer);
   ensureInit(ctx);
 

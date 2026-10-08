@@ -47,6 +47,11 @@ export function plural(n: number, word: string, pluralWord = word + "s"): string
   return `${n} ${n === 1 ? word : pluralWord}`;
 }
 
+/** Quote a path for a copy-pasteable shell command in a hint. */
+export function shellQuote(s: string): string {
+  return /^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
+}
+
 /** Show at most `max` items, then "and N more". */
 export function listSome(items: string[], max = 5): string {
   if (items.length <= max) return items.join(", ");

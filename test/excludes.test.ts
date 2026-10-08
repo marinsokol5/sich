@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { normalizeClaims } from "../src/claims";
+import { normalizeClaims, ownerOf, storable } from "../src/claims";
 import { baseExcludeLines, escapePattern, layerExcludeLines, spliceBlock, BLOCK_BEGIN, BLOCK_END } from "../src/excludes";
 
 describe("layer whitelist", () => {
@@ -81,5 +81,25 @@ describe("spliceBlock", () => {
 describe("normalizeClaims", () => {
   test("dedupes, sorts, absorbs, prefers the directory form", () => {
     expect(normalizeClaims(["b.md", "a/", "a/x", "b.md", "c", "c/"])).toEqual(["a/", "b.md", "c/"]);
+  });
+});
+
+describe("storable", () => {
+  test("rejects what a manifest line can't hold", () => {
+    expect(["a.md", "dir/", "a b/c.md", "dir/#x.md", "we*rd[1].md"].every(storable)).toBe(true);
+    expect(["#x.md", "x.md ", " x.md", "a\nb", "a\r"].some(storable)).toBe(false);
+  });
+});
+
+describe("ownerOf", () => {
+  test("most specific claim wins; icase folds case", () => {
+    const all = new Map([
+      ["notes", ["Docs/"]],
+      ["keys", ["Docs/api.env"]],
+    ]);
+    expect(ownerOf(all, "Docs/api.env")?.layer).toBe("keys");
+    expect(ownerOf(all, "Docs/guide.md")?.layer).toBe("notes");
+    expect(ownerOf(all, "docs/guide.md")).toBeNull();
+    expect(ownerOf(all, "docs/API.env", true)).toEqual({ layer: "keys", claim: "Docs/api.env" });
   });
 });

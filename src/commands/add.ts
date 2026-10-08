@@ -10,6 +10,7 @@ import {
   ownerOf,
   readManifest,
   samePath,
+  storable,
   writeManifest,
   type Claim,
 } from "../claims";
@@ -51,6 +52,13 @@ export function cmdAdd(ctx: Ctx, args: string[]): number {
     const up = resolveUserPath(ctx, input);
     if (!up.exists) fail(`'${input}' does not exist`);
     const claim = up.isDir ? up.rel + "/" : up.rel;
+    // Otherwise the claim would be lost on the next read and the path left visible to base.
+    if (!storable(claim)) {
+      fail(
+        `cannot claim '${up.rel}': claims can't start with '#', start or end with whitespace, ` +
+          `or contain line breaks (rename it, or claim a directory containing it)`,
+      );
+    }
     if (!targets.includes(claim)) targets.push(claim);
   }
 
@@ -164,8 +172,19 @@ export function cmdRm(ctx: Ctx, args: string[]): number {
   git(repo, ["add", "-f", "--", manifestRel(layer)]);
 
   out(`${c.green("released")} ${listSome(remove)} from ${c.bold(layer)} -> ${manifestRel(layer)}`);
-  out(`no longer hidden from base -> ${excludeFileShown(ctx.base)}`);
+  // A released path nested in another layer's directory claim goes to that layer, not base.
+  const after = allClaims(ctx);
+  const toBase = remove.filter((cl) => {
+    const heir = ownerOf(after, bare(cl));
+    if (heir) {
+      warn(`${cl} is inside ${heir.claim}, claimed by ${heir.layer}: it now belongs to ${heir.layer} (and goes into its next commit)`);
+    }
+    return !heir;
+  });
+  if (toBase.length) out(`no longer hidden from base -> ${excludeFileShown(ctx.base)}`);
   note(`staged in ${layer}; commit with: sich commit ${layer} -m <msg>`);
-  note(`${plural(remove.length, "path")} left on disk; they now show as untracked in base (add, delete or .gitignore them)`);
+  if (toBase.length) {
+    note(`${plural(toBase.length, "path")} left on disk; they now show as untracked in base (add, delete or .gitignore them)`);
+  }
   return 0;
 }

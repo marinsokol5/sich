@@ -38,6 +38,14 @@ export function cleanClaim(raw: string): Claim | null {
   return segs.join("/") + (dir ? "/" : "");
 }
 
+/**
+ * True if `claim` survives a round trip through the manifest, which is line based,
+ * trims whitespace and treats a leading "#" as a comment.
+ */
+export function storable(claim: Claim): boolean {
+  return !/[\r\n]/.test(claim) && !claim.startsWith("#") && cleanClaim(claim) === claim;
+}
+
 /** Dedupe, drop claims absorbed by a directory claim of the same layer, sort. */
 export function normalizeClaims(claims: Claim[]): Claim[] {
   const unique = [...new Set(claims)];
@@ -83,12 +91,21 @@ export function writeManifest(file: string, m: Manifest): void {
   writeFileSync(file, body.length ? body.join("\n") + "\n" : "");
 }
 
-/** The most specific claim covering `p` among all layers, if any. */
-export function ownerOf(all: Map<string, Claim[]>, p: string): { layer: string; claim: Claim } | null {
+/**
+ * The most specific claim covering `p` among all layers, if any. `icase` matches
+ * case-insensitively, as git does on case-insensitive filesystems (core.ignorecase).
+ */
+export function ownerOf(
+  all: Map<string, Claim[]>,
+  p: string,
+  icase = false,
+): { layer: string; claim: Claim } | null {
+  const fold = (s: string) => (icase ? s.toLowerCase() : s);
+  const path = fold(p);
   let best: { layer: string; claim: Claim } | null = null;
   for (const [layer, claims] of all) {
     for (const claim of claims) {
-      if (covers(claim, p) && (!best || bare(claim).length > bare(best.claim).length)) {
+      if (covers(fold(claim), path) && (!best || bare(claim).length > bare(best.claim).length)) {
         best = { layer, claim };
       }
     }

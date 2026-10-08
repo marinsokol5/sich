@@ -106,7 +106,7 @@ export function lines(s: string): string[] {
   return s.split("\n").filter((x) => x !== "");
 }
 
-/** Files in the repo's index at or under `path` (root-relative). */
+/** Files in the repo's index at or under any of `paths` (root-relative). */
 export function trackedUnder(repo: Repo, paths: string[]): string[] {
   if (paths.length === 0) return [];
   return splitZ(git(repo, ["ls-files", "-z", "--cached", "--", ...paths]).stdout);

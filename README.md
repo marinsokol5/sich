@@ -33,7 +33,7 @@ Runs on Node ≥ 18 with git ≥ 2.28. Building from source also needs pnpm, plu
 [Bun](https://bun.sh) for bundling and tests.
 
 ```sh
-git clone <this repo> sich && cd sich
+git clone https://github.com/marinsokol5/sich.git && cd sich
 pnpm install
 pnpm run install:global        # build, pack and install as the global `sich`
 ```
@@ -54,6 +54,11 @@ The pre-commit guard needs `sich` on `PATH`, or `SICH_BIN` set to its path (see 
   `SICH_BIN=$PWD/dist/cli.js git commit …`
 - `pnpm test` rebuilds and runs the suite (with `bun test`) against `dist/cli.js`;
   `pnpm run typecheck` checks types.
+
+Issues and pull requests are welcome. Most tests are integration tests in
+`test/sich.test.ts`: each builds throwaway repos (and local bare remotes) with
+the `Sandbox` helper and drives the built CLI, so add a test there with any
+behavior change, and make sure `pnpm run typecheck` and `pnpm test` pass.
 
 ## Quickstart
 
@@ -78,12 +83,12 @@ Global: `-C <dir>` (run as if in `<dir>`), `-h/--help` (also `sich <cmd> --help`
 | `sich new <layer> [--remote <url> \| --gh [name]]` | Creates a layer with an empty manifest and an initial commit. `--gh` runs `gh repo create <name> --private` (default name `<base-repo>-<layer>`) and sets `origin` to its SSH URL. `SICH_GH` overrides the `gh` binary. |
 | `sich attach <layer> <url>` | Collaborator flow: fetches the layer and checks out its default branch into the working tree. Refuses to overwrite existing files. |
 | `sich add <layer> <path...> [--move]` | Claims files or directories (relative to the current directory) and stages them in the layer. Refuses paths tracked by base or owned by another layer; `--move` untracks them from the old owner first. |
-| `sich rm <layer> <path...>` | Drops exact claims and untracks them in the layer. Files stay on disk (they now show as untracked in base). |
+| `sich rm <layer> <path...>` | Drops exact claims and untracks them in the layer. Files stay on disk (they now show as untracked in base, or belong to another layer whose directory claim contains them; sich warns). |
 | `sich which <path>` | Prints the owner: a layer (`(claimed, not yet committed)` if not tracked yet), `base`, `ignored`, or `untracked`. |
 | `sich ls [layer]` | Each layer's claims and tracked files. |
 | `sich status [-v] [--fetch]` | One row per repo (base first): branch, upstream ahead/behind, staged/modified/untracked counts. `-v` lists files, `--fetch` fetches first. |
-| `sich commit [layer...] -m <msg>` | `git add -A` + commit in each target layer (default: every layer with changes). Use plain `git commit` for base. |
-| `sich pull \| push \| sync [repo...]` | Base + all layers, or the named ones (`base` allowed). `pull` = `git pull --rebase --autostash`, `push` = `git push` (`-u origin <branch>` if no upstream yet), `sync` = pull then push. Repos without a remote are skipped. Stops at the first failure. |
+| `sich commit [layer...] -m <msg>` | `git add -A` + commit in each target layer (default: every layer with changes). Files the layer doesn't own are left out with a warning. Use plain `git commit` for base. |
+| `sich pull \| push \| sync [repo...]` | Base + all layers, or the named ones (`base` allowed). `pull` = `git pull --rebase --autostash`, `push` = `git push` (`-u origin <branch>` if no upstream yet), `sync` = pull then push. Repos without a remote are skipped. Stops at the first failure, and before a pull that would overwrite a file the repo doesn't track (see **Shared working tree**). |
 | `sich check [--fix] [--staged]` | Reports paths claimed or tracked by two layers, base tracking claimed paths or `.sich/`, layers tracking files they don't own, and stale exclude blocks (`--fix` rewrites them). `--staged` also fails if base's index stages a claimed path or anything in `.sich/`. Exit 1 on any issue. |
 | `sich <layer> <git args...>` | Runs git against a layer, e.g. `sich notes log`, `sich keys diff`. Exits with git's code. |
 | `sich base <git args...>` | Runs git against the base repo. |
@@ -124,6 +129,8 @@ runs git with explicit `--git-dir`/`--work-tree`, and strips `GIT_DIR`,
 line, directories end with `/`, `#` comments allowed. The manifest is tracked by
 layer `L` itself, so collaborators get it on `attach`/`pull`. It is the single
 source of truth for ownership; sich keeps it sorted (comments move to the top).
+Paths that a line can't hold (starting with `#`, starting or ending with
+whitespace, containing line breaks) can't be claimed.
 
 **Generated excludes.** sich owns a marked block in each repo's `info/exclude`
 (`# >>> sich: managed, do not edit >>>` … `# <<< sich <<<`; anything outside the
@@ -142,7 +149,10 @@ new files created inside a claimed directory automatically belong to that layer.
 
 **Guard.** The base `pre-commit` hook runs `sich check --staged`, which refuses
 a base commit that stages a claimed path or anything under `.sich/` (e.g. after
-`git add -f`). The hook runs `$SICH_BIN` if set, else `sich` on `PATH`; if it
+`git add -f`; on case-insensitive filesystems under any spelling). It runs the
+full `sich check`, so other problems it reports (like stale excludes) also block
+base commits until fixed. Where sich isn't set up (a linked `git worktree`) it
+does nothing. The hook runs `$SICH_BIN` if set, else `sich` on `PATH`; if it
 can't find either it blocks the commit (fail closed). Skip the check once with
 `git commit --no-verify`. GUI git clients may not see your shell's `PATH` or
 `SICH_BIN`; their commits will then be blocked.
@@ -163,8 +173,18 @@ can't find either it blocks the commit (fail closed). Skip the check once with
   (so a `.gitignore`d `.env` works), but inside a claimed directory, ignored
   files (`node_modules/`, `.DS_Store`) stay ignored. A claimed directory that is
   itself ignored can't be staged as a whole; claim its files individually.
+  Likewise a `!name` rule makes `name` visible to every repo, even ones that
+  don't own it; `sich commit` leaves such files out and the base hook blocks
+  them, but plain git in a layer won't.
 - **`main` only.** Layers are created on `main` and sich doesn't manage layer
   branches. (`attach` checks out the remote's default branch.)
 - **Shared working tree.** Operations that rewrite the working tree in one repo
-  (`checkout`, `reset --hard`, `clean -x`) can affect files owned by another.
-  `git clean -fdx` in base would delete every layer's files; don't.
+  (`checkout`, `reset --hard`, `clean -x`) can affect files owned by another:
+  git treats ignored files, which every other repo's files are, as expendable.
+  `git clean -fdx` (or `git stash --all`) in base would remove every layer's
+  files; don't. `sich pull` checks first and stops rather than overwrite a file
+  the pulled repo doesn't track; plain `git pull` doesn't.
+
+## License
+
+[MIT](LICENSE)

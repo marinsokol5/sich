@@ -4,7 +4,7 @@ import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { readManifest, type Claim } from "./claims";
 import { applyExclude, baseExcludeLines, layerExcludeLines, type ExcludeTarget } from "./excludes";
-import { gitPlain, type Repo } from "./git";
+import { git, gitPlain, type Repo } from "./git";
 import { fail } from "./ui";
 
 export interface Ctx {
@@ -139,15 +139,42 @@ export interface UserPath {
   isDir: boolean;
 }
 
-/** Real path of `abs`, resolving symlinks in its parents but not the final component. */
+/** True if the base repo matches paths case-insensitively (core.ignorecase, the macOS default). */
+export function ignoresCase(ctx: Ctx): boolean {
+  const r = git(ctx.base, ["config", "--type=bool", "--get", "core.ignorecase"], { allowFail: true });
+  return r.stdout.trim() === "true";
+}
+
+/**
+ * `name` as spelled on disk in `dir`. Differs from `name` only on case-insensitive
+ * filesystems, where `docs` may find `Docs`; git would stage nothing for the
+ * mistyped spelling, and claims must match what git reports.
+ */
+function onDiskName(dir: string, name: string): string {
+  try {
+    lstatSync(join(dir, name));
+    const entries = readdirSync(dir);
+    if (entries.includes(name)) return name;
+    return entries.find((e) => e.toLowerCase() === name.toLowerCase()) ?? name;
+  } catch {
+    return name;
+  }
+}
+
+/**
+ * Real path of `abs`, resolving symlinks in its parents but not the final
+ * component. Spelling follows the disk (native realpath fixes case on macOS).
+ */
 function realParent(abs: string): string {
   const parent = dirname(abs);
   if (parent === abs) return abs;
+  let real: string;
   try {
-    return join(realpathSync(parent), basename(abs));
+    real = realpathSync.native(parent);
   } catch {
-    return join(realParent(parent), basename(abs));
+    real = realParent(parent);
   }
+  return join(real, onDiskName(real, basename(abs)));
 }
 
 /** Resolve a path given on the command line (relative to cwd) to a root-relative path. */
@@ -169,4 +196,29 @@ export function resolveUserPath(ctx: Ctx, input: string, opts: { allowSich?: boo
     /* missing */
   }
   return { rel: posix, exists, isDir };
+}
+
+/**
+ * Root-relative paths that already exist on disk, plus existing non-directories
+ * standing where one of their parent directories would go. Checking these out
+ * would clobber them: git treats ignored files (every other repo's) as expendable.
+ */
+export function collisions(ctx: Ctx, paths: string[]): string[] {
+  const hits = new Set<string>();
+  const kind = (rel: string) => {
+    try {
+      return lstatSync(join(ctx.root, rel)).isDirectory() ? "dir" : "file";
+    } catch {
+      return null;
+    }
+  };
+  for (const p of paths) {
+    if (kind(p)) hits.add(p);
+    const segs = p.split("/");
+    for (let i = 1; i < segs.length; i++) {
+      const parent = segs.slice(0, i).join("/");
+      if (kind(parent) === "file") hits.add(parent);
+    }
+  }
+  return [...hits].sort();
 }

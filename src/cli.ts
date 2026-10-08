@@ -3,7 +3,7 @@
 
 import { realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import pkg from "../package.json";
+import { version } from "../package.json";
 import { wantsHelp } from "./args";
 import { cmdAdd, cmdRm } from "./commands/add";
 import { cmdCheck } from "./commands/check";
@@ -25,7 +25,7 @@ import { fail, out, printError, SichError } from "./ui";
  */
 declare const SICH_DEV: boolean | undefined;
 
-const VERSION = typeof SICH_DEV !== "undefined" && SICH_DEV ? `${pkg.version}-dev` : pkg.version;
+const VERSION = typeof SICH_DEV !== "undefined" && SICH_DEV ? `${version}-dev` : version;
 
 type Command = (typeof COMMANDS)[number];
 type Handler = (ctx: Ctx, args: string[]) => number;
@@ -46,14 +46,17 @@ const HANDLERS: Record<Exclude<Command, "help">, Handler> = {
   check: cmdCheck,
 };
 
-/** Commands that work before `sich init` (they set it up themselves). */
-const SELF_INIT = new Set<string>(["init", "new", "attach"]);
+/**
+ * Commands that handle a missing `sich init` themselves: init/new/attach set it up,
+ * and `check --staged` (the hook) has nothing to guard there.
+ */
+const SELF_INIT = new Set<string>(["init", "new", "attach", "check"]);
 
 function changeDir(cwd: string, dir: string): string {
   const target = resolve(cwd, dir);
   try {
     if (!statSync(target).isDirectory()) fail(`-C ${dir}: not a directory`);
-    return realpathSync(target);
+    return realpathSync.native(target);
   } catch (e) {
     if (e instanceof SichError) throw e;
     fail(`-C ${dir}: no such directory`);
@@ -61,7 +64,8 @@ function changeDir(cwd: string, dir: string): string {
 }
 
 export function main(argv: string[]): number {
-  let cwd = realpathSync(process.cwd());
+  // Native realpath also canonicalizes case (macOS), matching resolveUserPath.
+  let cwd = realpathSync.native(process.cwd());
   let i = 0;
   for (; i < argv.length; i++) {
     const a = argv[i]!;
