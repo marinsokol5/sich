@@ -191,7 +191,7 @@ Their per-repo access control is great, though, and sich builds on it!
 **Is this like git-crypt or sops?**
 No. sich doesn't encrypt anything; it relies on who can access each repo. You can combine the two for real secrets.
 
-## Caveats and contributing
+## Contributing
 
 [CONTRIBUTING.md](CONTRIBUTING.md)
 
