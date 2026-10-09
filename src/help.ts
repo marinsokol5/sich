@@ -12,6 +12,7 @@ setup
   new <layer> [--remote <url> | --gh [name]]
                                     create a layer (--gh: private GitHub repo)
   attach <layer> <url>              join an existing layer (collaborators)
+  detach <layer> [--force] [--yes]  remove a layer here; files and remote stay
 
 ownership
   claim <layer> <path...> [--move]  claim files/folders for a layer, stage them
@@ -77,6 +78,22 @@ its pre-commit and pre-merge-commit hooks (see sich init).
 Joins an existing layer: fetches <url> and checks out its default branch into
 this working tree, and installs its pre-commit and pre-merge-commit hooks (see
 sich init). Refuses to overwrite existing files.`,
+
+  detach: `usage: sich detach <layer> [--force] [--yes]
+
+The opposite of attach: removes a layer from this working tree by deleting its
+git data (.sich/<layer>/) and claims list (.sich/<layer>.paths). Its files stay
+on disk, no longer hidden from base (nothing stops base from committing them
+any more), and its remote is left alone: attach it again any time.
+Refuses if that would lose what exists only in .sich/<layer>/: commits on no
+remote (for branches: as of the last fetch or push), stashes, staged versions
+of files that changed again on disk, linked worktrees, submodule repos, or a
+merge, rebase or similar in progress. Uncommitted changes to files don't
+count, since the files stay.
+Lists what it deletes and what it keeps, then asks before doing it (no answer,
+e.g. without a terminal, means no).
+  --force     detach anyway, discarding all of that
+  -y, --yes   don't ask`,
 
   claim: `usage: sich claim <layer> <path...> [--move]
 

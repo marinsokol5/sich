@@ -50,8 +50,10 @@ export class Sandbox {
     return join(this.dir, ...parts);
   }
 
-  run(cmd: string[], cwd: string, extraEnv: Record<string, string> = {}): Run {
-    const r = Bun.spawnSync({ cmd, cwd, env: { ...this.env, ...extraEnv }, stdout: "pipe", stderr: "pipe" });
+  /** `input`, if given, is fed to stdin (otherwise stdin is empty). */
+  run(cmd: string[], cwd: string, extraEnv: Record<string, string> = {}, input?: string): Run {
+    const stdin = input === undefined ? undefined : Buffer.from(input);
+    const r = Bun.spawnSync({ cmd, cwd, env: { ...this.env, ...extraEnv }, stdin, stdout: "pipe", stderr: "pipe" });
     return { code: r.exitCode ?? 1, stdout: r.stdout.toString(), stderr: r.stderr.toString() };
   }
 
@@ -67,8 +69,8 @@ export class Sandbox {
     return this.git(root, `--git-dir=${join(root, ".sich", layer)}`, `--work-tree=${root}`, ...args);
   }
 
-  sich(cwd: string, args: string[], extraEnv: Record<string, string> = {}): Run {
-    return this.run([NODE, CLI, ...args], cwd, extraEnv);
+  sich(cwd: string, args: string[], extraEnv: Record<string, string> = {}, input?: string): Run {
+    return this.run([NODE, CLI, ...args], cwd, extraEnv, input);
   }
 
   /** Run the CLI and assert success. Returns stdout + stderr. */

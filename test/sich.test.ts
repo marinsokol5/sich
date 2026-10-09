@@ -1365,6 +1365,189 @@ describe("9. which / ls / unclaim / passthrough / names / --gh", () => {
   });
 });
 
+describe("10. detach", () => {
+  test("removes the layer but keeps its files and remote; changes to files don't block it", () => {
+    const r = published();
+    sb.write(r.root, "NOTES.md", "edited, not committed\n");
+    rmSync(join(r.root, "roadmap/q1.md"));
+    const out = sb.ok(r.root, "detach", "notes", "--yes");
+    expect(out).toContain("detached layer notes: deleted git data -> .sich/notes/, claims list -> .sich/notes.paths");
+    expect(out).toContain("no longer hidden from base -> .git/info/exclude");
+    expect(out).toContain("updated the excludes of keys -> .sich/keys/info/exclude");
+    expect(out).toContain("warning: base now sees NOTES.md, docs/guide.md as untracked");
+    expect(out).toContain(`to attach again: move its files away, then sich attach notes ${r.notesRemote}`);
+    expect(existsSync(join(r.root, ".sich/notes"))).toBe(false);
+    expect(existsSync(join(r.root, ".sich/notes.paths"))).toBe(false);
+    expect(sb.read(r.root, "NOTES.md")).toBe("edited, not committed\n");
+
+    // Base sees the files now; keys keeps its own and stops excluding notes' claims.
+    expect(managedBlock(sb.read(r.root, ".git/info/exclude"))).toEqual(["/.sich/", "/.env", "/docs/api.env"]);
+    expect(managedBlock(sb.read(r.root, ".sich/keys/info/exclude"))).not.toContain("/NOTES.md");
+    expect(baseStatus(r.root)).toEqual(["NOTES.md", "docs/guide.md"]);
+    expect(layerStatus(r.root, "keys")).toEqual([]);
+    expect(sb.ok(r.root, "status")).not.toMatch(/^notes/m);
+    expect(sb.ok(r.root, "check")).toContain("sich check: ok");
+    expect(sb.git(r.notesRemote, "log", "--format=%s", "main")).toContain("private stuff");
+
+    rmSync(join(r.root, "NOTES.md"));
+    rmSync(join(r.root, "docs/guide.md"));
+    sb.ok(r.root, "attach", "notes", r.notesRemote);
+    expect(sb.read(r.root, "NOTES.md")).toBe("my notes\n");
+    expect(baseStatus(r.root)).toEqual([]);
+  });
+
+  test("refuses to lose what exists only in the layer's git dir; --force discards it", () => {
+    const r = published();
+    const blocked = (...expected: string[]) => {
+      const out = sb.bad(r.root, "detach", "notes");
+      expect(out).toContain("detaching notes would lose what exists only in .sich/notes/");
+      for (const e of expected) expect(out).toContain(e);
+      expect(existsSync(join(r.root, ".sich/notes/HEAD"))).toBe(true);
+    };
+
+    sb.write(r.root, "NOTES.md", "v2\n");
+    sb.ok(r.root, "commit", "notes", "-m", "v2");
+    blocked("✗ 1 commit on main not on any remote (fix: sich push notes)");
+    sb.ok(r.root, "push", "notes");
+
+    sb.ok(r.root, "notes", "switch", "-q", "-c", "draft");
+    sb.write(r.root, "NOTES.md", "draft\n");
+    sb.ok(r.root, "notes", "commit", "-q", "-am", "draft");
+    sb.ok(r.root, "notes", "switch", "-q", "main");
+    blocked("✗ 1 commit on draft not on any remote (fix: sich notes push -u origin draft)");
+    sb.ok(r.root, "notes", "tag", "v1", "draft");
+    sb.ok(r.root, "notes", "branch", "-q", "-D", "draft");
+    blocked("✗ 1 commit only on tag v1 (fix: sich notes push origin v1)");
+    sb.ok(r.root, "notes", "tag", "-d", "v1");
+
+    sb.write(r.root, "NOTES.md", "stashed\n");
+    sb.ok(r.root, "notes", "stash", "-q");
+    blocked("✗ 1 stash entry (fix: sich notes stash pop, then commit)");
+    sb.ok(r.root, "notes", "stash", "pop", "-q");
+
+    // A staged version is lost only once the file on disk differs from it.
+    sb.ok(r.root, "notes", "add", "NOTES.md");
+    sb.write(r.root, "NOTES.md", "changed after staging\n");
+    blocked(
+      "✗ staged versions of NOTES.md that differ from what is on disk (fix: sich notes commit -m <msg>, then sich push notes)",
+    );
+
+    const forced = sb.sich(r.root, ["detach", "notes", "--force", "--yes"]);
+    expect(forced.code).toBe(0);
+    expect(forced.stderr).toContain("warning: discarding staged versions of NOTES.md");
+    expect(existsSync(join(r.root, ".sich/notes"))).toBe(false);
+    expect(sb.read(r.root, "NOTES.md")).toBe("changed after staging\n");
+  });
+
+  test("pushed tags and notes don't block; detached HEADs and linked worktrees do; staging alone doesn't", () => {
+    const r = published();
+    const blocked = (expected: string) => expect(sb.bad(r.root, "detach", "notes")).toContain(expected);
+
+    sb.ok(r.root, "notes", "switch", "-q", "-c", "draft");
+    sb.write(r.root, "NOTES.md", "draft\n");
+    sb.ok(r.root, "notes", "commit", "-q", "-am", "draft");
+    sb.ok(r.root, "notes", "tag", "-a", "-m", "v1", "v1");
+    sb.ok(r.root, "notes", "switch", "-q", "main");
+    sb.ok(r.root, "notes", "branch", "-q", "-D", "draft");
+    blocked("✗ 1 commit only on tag v1 (fix: sich notes push origin v1)");
+    sb.ok(r.root, "notes", "push", "-q", "origin", "v1");
+
+    sb.ok(r.root, "notes", "notes", "add", "-m", "a note", "HEAD");
+    blocked("✗ 1 commit only on refs/notes/commits (fix: sich notes push origin refs/notes/commits)");
+    sb.ok(r.root, "notes", "push", "-q", "origin", "refs/notes/commits");
+
+    sb.ok(r.root, "notes", "switch", "-q", "--detach");
+    sb.write(r.root, "NOTES.md", "detached\n");
+    sb.ok(r.root, "notes", "commit", "-q", "-am", "detached");
+    blocked("✗ 1 commit only on the detached HEAD (fix: sich notes switch -c <branch>)");
+    sb.ok(r.root, "notes", "switch", "-q", "-f", "main");
+
+    sb.ok(r.root, "notes", "worktree", "add", "-q", "--detach", "../wt", "main");
+    blocked(`✗ 1 linked worktree: ${sb.path("wt")} (fix: sich notes worktree remove <path>)`);
+    sb.ok(r.root, "notes", "worktree", "remove", "../wt");
+
+    // Staged versions that match the disk, and staged deletions, survive detaching.
+    sb.write(r.root, "NOTES.md", "staged\n");
+    sb.ok(r.root, "notes", "add", "NOTES.md");
+    sb.ok(r.root, "notes", "rm", "-q", "--cached", "docs/guide.md");
+    expect(sb.ok(r.root, "detach", "notes", "-y")).toContain("detached layer notes");
+    expect(sb.read(r.root, "NOTES.md")).toBe("staged\n");
+    expect(sb.read(r.root, "docs/guide.md")).toBe("guide\n");
+  });
+
+  test("refuses a layer without a remote; --force detaches it anyway", () => {
+    const root = setup("notes");
+    expect(sb.bad(root, "detach", "notes")).toContain(
+      "✗ 1 commit with no remote to push to (fix: sich notes remote add origin <url>, then sich push notes)",
+    );
+    const forced = sb.ok(root, "detach", "notes", "--force", "--yes");
+    expect(forced).toContain("warning: discarding 1 commit with no remote to push to");
+    expect(forced).not.toContain("to attach again");
+  });
+
+  test("refuses while a merge, rebase or similar is in progress", () => {
+    const r = published();
+    sb.ok(r.root, "notes", "switch", "-q", "-c", "draft");
+    sb.write(r.root, "NOTES.md", "draft\n");
+    sb.ok(r.root, "notes", "commit", "-q", "-am", "draft");
+    sb.ok(r.root, "notes", "push", "-q", "-u", "origin", "draft");
+    sb.ok(r.root, "notes", "switch", "-q", "main");
+    sb.write(r.root, "NOTES.md", "main\n");
+    sb.ok(r.root, "commit", "notes", "-m", "main");
+    sb.ok(r.root, "push", "notes");
+    expect(sb.sich(r.root, ["notes", "cherry-pick", "draft"]).code).not.toBe(0);
+    const out = sb.bad(r.root, "detach", "notes");
+    expect(out).toContain("✗ a cherry-pick in progress (fix: finish it, or sich notes cherry-pick --abort)");
+    expect(out).not.toContain("staged versions");
+  });
+
+  test("lists what it deletes and keeps, then asks; only y/yes detaches", () => {
+    const r = published();
+    const ask = (input?: string) => sb.sich(r.root, ["detach", "notes"], {}, input);
+
+    const no = ask("n\n");
+    expect(no.code).toBe(1);
+    expect(no.stdout).toBe(
+      [
+        "detaching notes:",
+        "  deletes   .sich/notes/ (its git data: local history, index, hooks, config)",
+        "  deletes   .sich/notes.paths (claims list: NOTES.md, docs/guide.md, roadmap/)",
+        "  keeps     NOTES.md, docs/guide.md, roadmap/ on disk, no longer hidden from base",
+        `  keeps     remote origin (${r.notesRemote}) and everything pushed to it`,
+        "",
+      ].join("\n"),
+    );
+    expect(no.stderr).toContain("Detach notes? [y/N]");
+    expect(no.stderr).toContain("sich: not detached");
+    expect(existsSync(join(r.root, ".sich/notes/HEAD"))).toBe(true);
+
+    const silent = ask();
+    expect(silent.code).toBe(1);
+    expect(silent.stderr).toContain("not detached (no answer on stdin; --yes skips the question)");
+    expect(existsSync(join(r.root, ".sich/notes/HEAD"))).toBe(true);
+
+    // With --force it also lists what it discards.
+    sb.write(r.root, "NOTES.md", "stashed\n");
+    sb.ok(r.root, "notes", "stash", "-q");
+    expect(sb.bad(r.root, "detach", "notes", "--force")).toContain("  discards  1 stash entry\n");
+
+    const yes = sb.sich(r.root, ["detach", "notes", "--force"], {}, "yes\n");
+    expect(yes.code).toBe(0);
+    expect(yes.stdout).toContain("detached layer notes");
+    expect(existsSync(join(r.root, ".sich/notes"))).toBe(false);
+  });
+
+  test("usage, help and wrong names", () => {
+    const root = setup("notes");
+    expect(sb.ok(root, "--help")).toMatch(/^  detach <layer> \[--force\] \[--yes\] +remove a layer here; files and remote stay$/m);
+    expect(sb.ok(root, "detach", "--help")).toContain("usage: sich detach <layer> [--force] [--yes]");
+    expect(sb.bad(root, "detach")).toContain("usage: sich detach");
+    expect(sb.bad(root, "detach", "base")).toContain("'base' is the public repo, not a layer");
+    expect(sb.bad(root, "detach", "nope")).toContain("no such layer 'nope'");
+    expect(sb.bad(root, "new", "detach")).toContain("reserved");
+  });
+});
+
 describe("cli basics", () => {
   test("--help, <cmd> --help, --version, -C, uninitialized repo", () => {
     const root = sb.repo("proj");

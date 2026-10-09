@@ -7,9 +7,9 @@ every change has to respect.
 ## Layout
 
 - `src/cli.ts`: entry point, command dispatch, `--version`.
-- `src/commands/`: one file per command group (`init`, `layer` = new/attach,
-  `claim` = claim/unclaim (aliases add/rm), `inspect` = which/ls, `status`,
-  `commit`, `sync` = pull/push/sync, `check`).
+- `src/commands/`: one file per command group (`init`,
+  `layer` = new/attach/detach, `claim` = claim/unclaim (aliases add/rm),
+  `inspect` = which/ls, `status`, `commit`, `sync` = pull/push/sync, `check`).
 - `src/git.ts`: the only way sich runs git (explicit `--git-dir`/`--work-tree`,
   scrubbed environment, literal pathspecs).
 - `src/claims.ts`: claims and manifests (`.sich/<layer>.paths`).

@@ -94,6 +94,7 @@ setup
   new <layer> [--remote <url> | --gh [name]]
                                     create a layer (--gh: private GitHub repo)
   attach <layer> <url>              join an existing layer (collaborators)
+  detach <layer> [--force] [--yes]  remove a layer here; files and remote stay
 
 ownership
   claim <layer> <path...> [--move]  claim files/folders for a layer, stage them

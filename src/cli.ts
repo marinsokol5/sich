@@ -10,7 +10,7 @@ import { cmdClaim, cmdUnclaim } from "./commands/claim";
 import { cmdCommit } from "./commands/commit";
 import { cmdInit } from "./commands/init";
 import { cmdLs, cmdWhich } from "./commands/inspect";
-import { cmdAttach, cmdNew } from "./commands/layer";
+import { cmdAttach, cmdDetach, cmdNew } from "./commands/layer";
 import { cmdStatus } from "./commands/status";
 import { cmdRemote } from "./commands/sync";
 import { COMMANDS, layerExists, loadCtx, repoByName, requireInit, syncExcludes, type Ctx } from "./context";
@@ -28,12 +28,13 @@ declare const SICH_DEV: boolean | undefined;
 const VERSION = typeof SICH_DEV !== "undefined" && SICH_DEV ? `${version}-dev` : version;
 
 type Command = (typeof COMMANDS)[number];
-type Handler = (ctx: Ctx, args: string[]) => number;
+type Handler = (ctx: Ctx, args: string[]) => number | Promise<number>;
 
 const HANDLERS: Record<Exclude<Command, "help">, Handler> = {
   init: cmdInit,
   new: cmdNew,
   attach: cmdAttach,
+  detach: cmdDetach,
   claim: cmdClaim,
   unclaim: cmdUnclaim,
   // Undocumented aliases (older name); `sich <layer> add` is git's add, not this.
@@ -66,7 +67,7 @@ function changeDir(cwd: string, dir: string): string {
   }
 }
 
-export function main(argv: string[]): number {
+export async function main(argv: string[]): Promise<number> {
   // Native realpath also canonicalizes case (macOS), matching resolveUserPath.
   let cwd = realpathSync.native(process.cwd());
   let i = 0;
@@ -128,7 +129,7 @@ export function main(argv: string[]): number {
 
 let code: number;
 try {
-  code = main(process.argv.slice(2));
+  code = await main(process.argv.slice(2));
 } catch (e) {
   if (e instanceof SichError) printError(e.message);
   else printError(process.env.SICH_DEBUG ? String((e as Error).stack) : String((e as Error).message ?? e));

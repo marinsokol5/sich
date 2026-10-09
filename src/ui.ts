@@ -43,6 +43,25 @@ export function printError(message: string): void {
   process.stderr.write(`${ce.red("sich:")} ${message}\n`);
 }
 
+/**
+ * Ask a yes/no question on stderr and read the answer from stdin. Anything but
+ * y/yes is a no, including no answer at all (stdin closed or at its end).
+ */
+export async function confirm(question: string): Promise<boolean> {
+  process.stderr.write(`${question} [y/N] `);
+  let answer = "";
+  try {
+    for await (const chunk of process.stdin) {
+      answer += String(chunk);
+      if (answer.includes("\n")) break;
+    }
+  } catch {
+    /* no usable stdin: no answer */
+  }
+  if (!process.stdin.isTTY) process.stderr.write("\n");
+  return /^y(es)?$/i.test(answer.split("\n")[0]!.trim());
+}
+
 export function plural(n: number, word: string, pluralWord = word + "s"): string {
   return `${n} ${n === 1 ? word : pluralWord}`;
 }
