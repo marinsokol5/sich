@@ -16,7 +16,7 @@ export GIT_COMMITTER_NAME=You GIT_COMMITTER_EMAIL=you@example.com
 export GIT_AUTHOR_DATE=2026-01-01T12:00:00Z GIT_COMMITTER_DATE=2026-01-01T12:00:00Z
 printf '[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n' >"$GIT_CONFIG_GLOBAL"
 
-# `sich` (and the pre-commit hooks) run this checkout's build.
+# `sich` (and the guard hooks) run this checkout's build.
 mkdir "$TMP/bin"
 printf '#!/bin/sh\nexec node "%s/dist/cli.js" "$@"\n' "$ROOT" >"$TMP/bin/sich"
 chmod +x "$TMP/bin/sich"
@@ -117,6 +117,9 @@ block .sich/team/info/exclude
 printf 'The pre-commit hooks that guard base and each layer:\n\n'
 file .git/hooks/pre-commit
 file .sich/personal/hooks/pre-commit
+printf 'Each repo also gets a `pre-merge-commit` hook, which git runs instead of\n'
+printf '`pre-commit` for a merge commit made without conflicts. It differs only in its\nmessages and in passing `--merge`, so a blocked merge says how to back out:\n\n'
+console "diff .git/hooks/pre-commit .git/hooks/pre-merge-commit"
 
 printf '## 5. The guard in action\n\n'
 printf 'Forcing a private file into base gets blocked:\n\n'

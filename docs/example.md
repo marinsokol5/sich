@@ -20,11 +20,13 @@ $ sich init
 created .sich/ (holds every layer's git data and claims list)
 excluded .sich/ from base -> .git/info/exclude
 installed pre-commit hook -> .git/hooks/pre-commit
+installed pre-merge-commit hook -> .git/hooks/pre-merge-commit
 initialized sich in ~/myproject
 $ sich new personal --remote ~/remotes/myproject-personal.git
 created layer personal: git data -> .sich/personal/, claims list -> .sich/personal.paths
 set origin of personal -> ~/remotes/myproject-personal.git
 installed pre-commit hook of personal -> .sich/personal/hooks/pre-commit
+installed pre-merge-commit hook of personal -> .sich/personal/hooks/pre-merge-commit
 next: sich claim personal <path>...  then  sich commit personal -m <msg>  and  sich push personal
 $ sich claim personal my-notes.md
 claimed my-notes.md for personal -> .sich/personal.paths
@@ -48,6 +50,7 @@ $ sich new team --remote ~/remotes/myproject-team.git
 created layer team: git data -> .sich/team/, claims list -> .sich/team.paths
 set origin of team -> ~/remotes/myproject-team.git
 installed pre-commit hook of team -> .sich/team/hooks/pre-commit
+installed pre-merge-commit hook of team -> .sich/team/hooks/pre-merge-commit
 next: sich claim team <path>...  then  sich commit team -m <msg>  and  sich push team
 $ sich claim team roadmap.md api-keys.env llm-transcripts/
 claimed roadmap.md, api-keys.env, llm-transcripts/ for team -> .sich/team.paths
@@ -226,6 +229,22 @@ fi
 exec "$sich" check --staged
 ```
 
+Each repo also gets a `pre-merge-commit` hook, which git runs instead of
+`pre-commit` for a merge commit made without conflicts. It differs only in its
+messages and in passing `--merge`, so a blocked merge says how to back out:
+
+```console
+$ diff .git/hooks/pre-commit .git/hooks/pre-merge-commit
+5c5
+<   echo "sich: commit blocked: '$sich' not found; put sich on PATH or set SICH_BIN (skip once: git commit --no-verify)" >&2
+---
+>   echo "sich: merge blocked: '$sich' not found; put sich on PATH or set SICH_BIN (skip once: git merge --no-verify)" >&2
+8c8
+< exec "$sich" check --staged
+---
+> exec "$sich" check --staged --merge
+```
+
 ## 5. The guard in action
 
 Forcing a private file into base gets blocked:
@@ -264,9 +283,11 @@ $ sich attach team ~/remotes/myproject-team.git
 created .sich/ (holds every layer's git data and claims list)
 excluded .sich/ from base -> .git/info/exclude
 installed pre-commit hook -> .git/hooks/pre-commit
+installed pre-merge-commit hook -> .git/hooks/pre-merge-commit
 attached layer team from ~/remotes/myproject-team.git -> .sich/team/ (branch main)
 checked out 4 files: .sich/team.paths, api-keys.env, llm-transcripts/2026-01-01-planning.md, roadmap.md
 installed pre-commit hook of team -> .sich/team/hooks/pre-commit
+installed pre-merge-commit hook of team -> .sich/team/hooks/pre-merge-commit
 $ ls -A
 .git
 .sich

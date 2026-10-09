@@ -51,10 +51,12 @@ describe("1. init", () => {
     const root = sb.repo("proj");
     sb.write(root, ".git/info/exclude", "# mine\n*.tmp\n");
     const first = sb.ok(root, "init");
-    expect(first).toContain("installed pre-commit hook");
-    const hook = join(root, ".git/hooks/pre-commit");
-    expect(readFileSync(hook, "utf8")).toContain('exec "$sich" check --staged');
-    expect(statSync(hook).mode & 0o111).not.toBe(0);
+    for (const name of ["pre-commit", "pre-merge-commit"]) {
+      expect(first).toContain(`installed ${name} hook -> .git/hooks/${name}`);
+      const hook = join(root, ".git/hooks", name);
+      expect(readFileSync(hook, "utf8")).toContain('exec "$sich" check --staged');
+      expect(statSync(hook).mode & 0o111).not.toBe(0);
+    }
 
     const second = sb.ok(root, "init");
     expect(second).toContain("already initialized");
@@ -91,9 +93,14 @@ describe("1. init", () => {
     const other = sb.repo("other");
     sb.git(other, "config", "core.hooksPath", ".githooks");
     const out2 = sb.ok(other, "init");
-    expect(out2).toContain("core.hooksPath");
-    expect(existsSync(join(other, ".githooks/pre-commit"))).toBe(false);
-    expect(existsSync(join(other, ".git/hooks/pre-commit"))).toBe(false);
+    expect(out2).toContain(`core.hooksPath is set (.githooks); add this line to its pre-commit hook:\n  ${line}`);
+    expect(out2).toContain(
+      'core.hooksPath is set (.githooks); add this line to its pre-merge-commit hook:\n  "${SICH_BIN:-sich}" check --staged --merge || exit 1',
+    );
+    for (const hook of ["pre-commit", "pre-merge-commit"]) {
+      expect(existsSync(join(other, ".githooks", hook))).toBe(false);
+      expect(existsSync(join(other, ".git/hooks", hook))).toBe(false);
+    }
   });
 });
 
@@ -499,7 +506,7 @@ describe("7. pull", () => {
   });
 });
 
-describe("8. check and the pre-commit hook", () => {
+describe("8. check and the guard hooks", () => {
   test("check detects conflicts and stale excludes; --fix repairs excludes", () => {
     const root = setup("notes", "keys");
     sb.write(root, "a.md", "a\n");
@@ -609,7 +616,7 @@ describe("8. check and the pre-commit hook", () => {
     const warned = sb.run(["git", "commit", "-q", "-m", "public"], root);
     expect(warned.code).toBe(0);
     expect(warned.stderr).toContain("stale exclude rules of notes in .sich/notes/info/exclude");
-    expect(warned.stderr).toContain("not blocking this commit");
+    expect(warned.stderr).toContain("(fix: sich check --fix); not blocking\n");
 
     // Two layers claiming the same file could leak personal notes into a shared layer.
     sb.write(root, ".sich/team.paths", "about-teammates.md\n");
@@ -767,6 +774,8 @@ describe("8. check and the pre-commit hook", () => {
   test("one hook line guards base and every layer, even in a core.hooksPath shared by projects", () => {
     const line = '"${SICH_BIN:-sich}" check --staged || exit 1';
     const shared = sb.script("shared-hooks/pre-commit", `#!/bin/sh\n${line}\n`);
+    const mergeLine = '"${SICH_BIN:-sich}" check --staged --merge || exit 1';
+    sb.script("shared-hooks/pre-merge-commit", `#!/bin/sh\n${mergeLine}\n`);
     sb.git(sb.dir, "config", "--global", "core.hooksPath", dirname(shared));
 
     // The shared hook already runs sich, so init and new leave it be.
@@ -779,7 +788,7 @@ describe("8. check and the pre-commit hook", () => {
     const b = sb.repo("b");
     sb.ok(b, "init");
     sb.ok(b, "new", "team"); // a has notes, b doesn't: the hook names no layer
-    expect(sb.sich(a, ["check"]).stderr).not.toContain("no pre-commit hook");
+    expect(sb.sich(a, ["check"]).stderr).toBe("");
 
     sb.write(a, "n.md", "n\n");
     sb.ok(a, "claim", "notes", "n.md");
@@ -805,6 +814,17 @@ describe("8. check and the pre-commit hook", () => {
     const baseOk = sb.run(["git", "commit", "-q", "-m", "public"], b);
     expect(baseOk.stdout + baseOk.stderr).toBe("");
     expect(baseOk.code).toBe(0);
+
+    // A shared hooks directory guarding commits but not merges: init asks for the
+    // missing hook (without writing into it) and check warns about it.
+    rmSync(sb.path("shared-hooks/pre-merge-commit"));
+    expect(sb.ok(a, "init")).toContain(
+      `core.hooksPath is set (${dirname(shared)}); add this line to its pre-merge-commit hook:\n  ${mergeLine}`,
+    );
+    expect(existsSync(sb.path("shared-hooks/pre-merge-commit"))).toBe(false);
+    expect(sb.sich(a, ["check"]).stderr).toContain(
+      `warning: notes has no pre-merge-commit hook running sich check --staged (../shared-hooks/pre-merge-commit)`,
+    );
   });
 
   test("a layer's hook checks the claims list being committed, not only the one on disk", () => {
@@ -893,6 +913,331 @@ describe("8. check and the pre-commit hook", () => {
     expect(r.stdout + r.stderr).toBe("");
     expect(r.code).toBe(0);
     expect(sb.bad(wt, "check")).toContain("not initialized");
+  });
+
+  /** A SICH_BIN that logs each run's arguments before running sich: proves a hook ran, and how. */
+  function loggingSich(): { env: Record<string, string>; runs: () => string } {
+    const log = sb.path("sich-runs.log");
+    const bin = sb.script("bin/logging-sich", `#!/bin/sh\necho "$*" >> "${log}"\nexec "${sb.env.SICH_BIN}" "$@"\n`);
+    return { env: { SICH_BIN: bin }, runs: () => (existsSync(log) ? readFileSync(log, "utf8") : "") };
+  }
+
+  /** Base pushed to a local bare remote, and a plain-git clone of it: a teammate without sich. */
+  function withTeammate(root: string): string {
+    const remote = sb.bare("base.git");
+    sb.git(root, "remote", "add", "origin", remote);
+    sb.git(root, "push", "-q", "-u", "origin", "main");
+    const mate = sb.path("mate");
+    sb.git(sb.dir, "clone", "-q", remote, mate);
+    return mate;
+  }
+
+  const MERGE_LINE = '"${SICH_BIN:-sich}" check --staged --merge || exit 1';
+
+  test("the generated hooks, byte for byte", () => {
+    const root = setup("notes");
+    const body = (header: string, op: string, skip: string, check: string) =>
+      [
+        "#!/bin/sh",
+        header,
+        'sich="${SICH_BIN:-sich}"',
+        'if ! command -v "$sich" >/dev/null 2>&1; then',
+        `  echo "sich: ${op} blocked: '$sich' not found; put sich on PATH or set SICH_BIN (skip once: ${skip} ${op} --no-verify)" >&2`,
+        "  exit 1",
+        "fi",
+        `exec "$sich" ${check}`,
+        "",
+      ].join("\n");
+    const base = "# Installed by sich: stop private (layer-claimed) files from being committed to base.";
+    const notes = "# Installed by sich for layer notes: stop files notes doesn't own from being committed to it.";
+    expect(sb.read(root, ".git/hooks/pre-commit")).toBe(body(base, "commit", "git", "check --staged"));
+    expect(sb.read(root, ".git/hooks/pre-merge-commit")).toBe(body(base, "merge", "git", "check --staged --merge"));
+    expect(sb.read(root, ".sich/notes/hooks/pre-commit")).toBe(body(notes, "commit", "sich notes", "check --staged"));
+    expect(sb.read(root, ".sich/notes/hooks/pre-merge-commit")).toBe(
+      body(notes, "merge", "sich notes", "check --staged --merge"),
+    );
+    expect(sb.bad(root, "check", "--merge")).toContain("--merge only applies with --staged");
+  });
+
+  test("base's pre-merge-commit hook blocks a merge bringing in a private file, passes a clean one", () => {
+    const root = setup("notes");
+    const { env, runs } = loggingSich();
+    sb.write(root, "secret.md", "s\n");
+    sb.ok(root, "claim", "notes", "secret.md");
+    // A side branch that let a claimed file into base with --no-verify.
+    sb.git(root, "switch", "-q", "-c", "leaky");
+    sb.git(root, "add", "-f", "secret.md");
+    sb.git(root, "commit", "-q", "--no-verify", "-m", "leak");
+    sb.git(root, "switch", "-q", "main");
+    // A conflict-free merge commit runs pre-merge-commit, not pre-commit.
+    const blocked = sb.run(["git", "merge", "--no-ff", "-m", "merge leaky", "leaky"], root, env);
+    expect(blocked.code).not.toBe(0);
+    expect(runs()).toBe("check --staged --merge\n");
+    const out = blocked.stdout + blocked.stderr;
+    expect(out).toContain("base has a staged change to private path secret.md (claimed by notes)");
+    expect(out).toContain("this merge isn't committed; back it out with: git merge --abort");
+    expect(out).toContain("don't unstage them and commit the merge: that drops the other side's changes to them");
+    expect(out).toContain("sich pull refuses up front to overwrite such files");
+    expect(out).not.toContain("unstage with");
+    expect(sb.git(root, "log", "--format=%s")).toBe("init\n");
+    sb.git(root, "merge", "--abort");
+
+    // git pull without --rebase merges the same way.
+    const pulled = sb.run(["git", "pull", "--no-rebase", "--no-ff", "-q", ".", "leaky"], root, env);
+    expect(pulled.code).not.toBe(0);
+    expect(pulled.stdout + pulled.stderr).toContain("staged change to private path secret.md");
+    expect(sb.git(root, "log", "--format=%s")).toBe("init\n");
+    sb.git(root, "merge", "--abort");
+
+    // A clean merge passes, silently, although the hook ran.
+    sb.git(root, "switch", "-q", "-c", "clean");
+    sb.write(root, "public.md", "p\n");
+    sb.git(root, "add", "public.md");
+    sb.git(root, "commit", "-q", "-m", "public");
+    sb.git(root, "switch", "-q", "main");
+    const merged = sb.run(["git", "merge", "-q", "--no-ff", "-m", "merge clean", "clean"], root, env);
+    expect(merged.stdout + merged.stderr).toBe("");
+    expect(merged.code).toBe(0);
+    expect(runs()).toBe("check --staged --merge\n".repeat(3));
+    expect(sb.git(root, "log", "--format=%s", "--first-parent")).toBe("merge clean\ninit\n");
+  });
+
+  test("a blocked merge that overwrote a private file says to abort, then restore it", () => {
+    const root = setup("notes");
+    const mate = withTeammate(root);
+    // A teammate commits foo.md to base, which is private here.
+    sb.write(mate, "foo.md", "theirs\n");
+    sb.git(mate, "add", "foo.md");
+    sb.git(mate, "commit", "-q", "-m", "foo");
+    sb.git(mate, "push", "-q");
+    sb.write(root, "foo.md", "mine\n");
+    sb.ok(root, "claim", "notes", "foo.md");
+    sb.ok(root, "commit", "notes", "-m", "foo");
+    sb.write(root, "README.md", "# project, local\n");
+    sb.git(root, "commit", "-q", "-am", "local");
+
+    const blocked = sb.run(["git", "pull", "-q", "--no-rebase", "origin", "main"], root);
+    expect(blocked.code).not.toBe(0);
+    const out = blocked.stdout + blocked.stderr;
+    expect(out).toContain("base has a staged change to private path foo.md (claimed by notes)");
+    expect(out).toContain(
+      "  this merge isn't committed; back it out with: git merge --abort\n" +
+        "  the merge may have overwritten foo.md (tracked by notes); after aborting, restore with: " +
+        "sich notes restore -- foo.md\n" +
+        "  don't unstage them and commit the merge: that drops the other side's changes to them\n",
+    );
+    // git already wrote their version over the private one.
+    expect(sb.read(root, "foo.md")).toBe("theirs\n");
+
+    // Following the hints, in that order, gets the private file back.
+    sb.git(root, "merge", "--abort");
+    expect(existsSync(join(root, "foo.md"))).toBe(false);
+    sb.ok(root, "notes", "restore", "--", "foo.md");
+    expect(sb.read(root, "foo.md")).toBe("mine\n");
+    expect(sb.git(root, "log", "--format=%s")).toBe("local\ninit\n");
+    expect(layerStatus(root, "notes")).toEqual([]);
+  });
+
+  test("finishing a conflicted merge with git commit also gets the merge hints", () => {
+    const root = setup("notes");
+    const mate = withTeammate(root);
+    sb.write(mate, "README.md", "# theirs\n");
+    sb.write(mate, "foo.md", "theirs\n");
+    sb.git(mate, "add", "README.md", "foo.md");
+    sb.git(mate, "commit", "-q", "-m", "theirs");
+    sb.git(mate, "push", "-q");
+    sb.write(root, "foo.md", "mine\n");
+    sb.ok(root, "claim", "notes", "foo.md");
+    sb.ok(root, "commit", "notes", "-m", "foo");
+    sb.write(root, "README.md", "# mine\n");
+    sb.git(root, "commit", "-q", "-am", "local");
+
+    // Stops on the README conflict; git commit then runs pre-commit, with MERGE_HEAD in place.
+    expect(sb.run(["git", "pull", "-q", "--no-rebase", "origin", "main"], root).code).not.toBe(0);
+    sb.write(root, "README.md", "# both\n");
+    sb.git(root, "add", "README.md");
+    const blocked = sb.run(["git", "commit", "--no-edit"], root);
+    expect(blocked.code).not.toBe(0);
+    const out = blocked.stdout + blocked.stderr;
+    expect(out).toContain("base has a staged change to private path foo.md (claimed by notes)");
+    expect(out).toContain("back it out with: git merge --abort");
+    expect(out).toContain("restore with: sich notes restore -- foo.md");
+    expect(out).not.toContain("unstage with");
+    sb.git(root, "merge", "--abort");
+    sb.ok(root, "notes", "restore", "--", "foo.md");
+    expect(sb.read(root, "foo.md")).toBe("mine\n");
+  });
+
+  test("a layer's pre-merge-commit hook checks what the merge brings in", () => {
+    const root = setup("notes");
+    const { env, runs } = loggingSich();
+    const log = () => sb.layerGit(root, "notes", "log", "--format=%s", "--first-parent");
+
+    // A side branch that let an unclaimed file into the layer with --no-verify.
+    sb.ok(root, "notes", "switch", "-q", "-c", "stray");
+    sb.write(root, "stray.md", "s\n");
+    sb.layerGit(root, "notes", "add", "-f", "stray.md");
+    sb.ok(root, "notes", "commit", "-q", "--no-verify", "-m", "stray");
+    sb.ok(root, "notes", "switch", "-q", "main");
+    // Merged with plain git and a relative --git-dir...
+    const blocked = sb.run(
+      ["git", "--git-dir=.sich/notes", "--work-tree=.", "merge", "--no-ff", "-m", "merge stray", "stray"],
+      root,
+      env,
+    );
+    expect(blocked.code).not.toBe(0);
+    let out = blocked.stdout + blocked.stderr;
+    expect(out).toContain("notes has a staged change to stray.md, which none of its claims cover");
+    expect(out).toContain("this merge isn't committed; back it out with: sich notes merge --abort");
+    expect(out).toContain("don't untrack them and commit the merge");
+    expect(out).toContain("fix them where they come from (claim or untrack them on that branch), then merge again");
+    expect(out).not.toContain("claim with:");
+    expect(out).not.toContain("may have overwritten"); // no other repo tracks stray.md
+    expect(log()).toBe("sich: create layer notes\n");
+    sb.ok(root, "notes", "merge", "--abort");
+    // ...or through the passthrough (absolute --git-dir).
+    const viaSich = sb.sich(root, ["notes", "merge", "--no-ff", "-m", "merge stray", "stray"], env);
+    expect(viaSich.code).not.toBe(0);
+    out = viaSich.stdout + viaSich.stderr;
+    expect(out).toContain("notes has a staged change to stray.md, which none of its claims cover");
+    expect(log()).toBe("sich: create layer notes\n");
+    sb.ok(root, "notes", "merge", "--abort");
+
+    // A branch that claims a file and commits it along with the claims list.
+    sb.ok(root, "notes", "switch", "-q", "-c", "plan");
+    sb.write(root, "plan.md", "p\n");
+    sb.ok(root, "claim", "notes", "plan.md");
+    sb.ok(root, "notes", "commit", "-q", "-m", "plan");
+    sb.ok(root, "notes", "switch", "-q", "main");
+    const merged = sb.sich(root, ["notes", "merge", "-q", "--no-ff", "-m", "merge plan", "plan"], env);
+    expect(merged.stdout).toBe("");
+    // The merge changes notes' claims, so both exclude blocks are stale: one warning.
+    expect(merged.stderr).toBe(
+      "warning: stale exclude rules of base in .git/info/exclude, notes in .sich/notes/info/exclude " +
+        "(fix: sich check --fix); not blocking\n",
+    );
+    expect(merged.code).toBe(0);
+    expect(runs()).toBe("check --staged --merge\n".repeat(3));
+    expect(log()).toBe("merge plan\nsich: create layer notes\n");
+    expect(layerFiles(root, "notes")).toEqual([".sich/notes.paths", "plan.md"]);
+    expect(sb.ok(root, "check")).toContain("ok");
+  });
+
+  test("a layer's pre-merge-commit hook lets a merge untrack a stray file", () => {
+    const root = setup("notes");
+    const { env, runs } = loggingSich();
+    sb.write(root, "stray.md", "s\n");
+    sb.layerGit(root, "notes", "add", "-f", "stray.md");
+    sb.ok(root, "notes", "commit", "-q", "--no-verify", "-m", "oops");
+    sb.ok(root, "notes", "switch", "-q", "-c", "fix");
+    sb.ok(root, "notes", "rm", "-q", "--cached", "--", "stray.md");
+    sb.ok(root, "notes", "commit", "-q", "--no-verify", "-m", "untrack stray.md");
+    sb.ok(root, "notes", "switch", "-q", "main");
+    // While main still tracks it, an unrelated merge is blocked...
+    sb.ok(root, "notes", "switch", "-q", "-c", "other");
+    sb.ok(root, "notes", "commit", "-q", "--no-verify", "--allow-empty", "-m", "other");
+    sb.ok(root, "notes", "switch", "-q", "main");
+    const blocked = sb.sich(root, ["notes", "merge", "-q", "--no-ff", "-m", "merge other", "other"], env);
+    expect(blocked.code).not.toBe(0);
+    expect(blocked.stdout + blocked.stderr).toContain("notes tracks stray.md but none of its claims cover it");
+    sb.ok(root, "notes", "merge", "--abort");
+    // ...and the merge that untracks it goes through.
+    const merged = sb.sich(root, ["notes", "merge", "-q", "--no-ff", "-m", "merge fix", "fix"], env);
+    expect(merged.stdout + merged.stderr).toBe("");
+    expect(merged.code).toBe(0);
+    expect(runs()).toBe("check --staged --merge\n".repeat(2));
+    expect(layerFiles(root, "notes")).toEqual([".sich/notes.paths"]);
+  });
+
+  test("fast-forward merges run no hook; plain sich check flags what they bring in", () => {
+    const root = setup("notes");
+    const { env, runs } = loggingSich();
+    sb.write(root, "secret.md", "s\n");
+    sb.ok(root, "claim", "notes", "secret.md");
+    sb.git(root, "switch", "-q", "-c", "leaky");
+    sb.git(root, "add", "-f", "secret.md");
+    sb.git(root, "commit", "-q", "--no-verify", "-m", "leak");
+    sb.git(root, "switch", "-q", "main");
+    expect(sb.run(["git", "merge", "-q", "leaky"], root, env).code).toBe(0);
+    expect(sb.git(root, "log", "--format=%s")).toBe("leak\ninit\n");
+
+    sb.ok(root, "notes", "switch", "-q", "-c", "stray");
+    sb.write(root, "stray.md", "s\n");
+    sb.layerGit(root, "notes", "add", "-f", "stray.md");
+    sb.ok(root, "notes", "commit", "-q", "--no-verify", "-m", "stray");
+    sb.ok(root, "notes", "switch", "-q", "main");
+    expect(sb.sich(root, ["notes", "merge", "-q", "stray"], env).code).toBe(0);
+
+    expect(runs()).toBe("");
+    const out = sb.bad(root, "check");
+    expect(out).toContain("base tracks secret.md, which is claimed by notes");
+    expect(out).toContain("notes tracks stray.md but none of its claims cover it");
+  });
+
+  test("init adds pre-merge-commit hooks to repos that only have pre-commit, leaving user-written ones alone", () => {
+    const root = setup("notes");
+    // Set up by a sich that only installed pre-commit hooks.
+    rmSync(join(root, ".git/hooks/pre-merge-commit"));
+    rmSync(join(root, ".sich/notes/hooks/pre-merge-commit"));
+    const check = sb.sich(root, ["check"]);
+    expect(check.code).toBe(0);
+    expect(check.stderr).toContain(
+      "warning: base has no pre-merge-commit hook running sich check --staged (.git/hooks/pre-merge-commit); fix: sich init",
+    );
+    expect(check.stderr).toContain("warning: notes has no pre-merge-commit hook running sich check --staged");
+    const out = sb.ok(root, "init");
+    expect(out).toContain("installed pre-merge-commit hook -> .git/hooks/pre-merge-commit");
+    expect(out).toContain("installed pre-merge-commit hook of notes -> .sich/notes/hooks/pre-merge-commit");
+    expect(out).not.toContain("pre-commit hook");
+    expect(statSync(join(root, ".sich/notes/hooks/pre-merge-commit")).mode & 0o111).not.toBe(0);
+    expect(sb.sich(root, ["check"]).stderr).toBe("");
+
+    // Missing both: one warning per repo.
+    rmSync(join(root, ".sich/notes/hooks/pre-commit"));
+    rmSync(join(root, ".sich/notes/hooks/pre-merge-commit"));
+    expect(sb.sich(root, ["check"]).stderr).toBe(
+      "warning: notes has no pre-commit and pre-merge-commit hooks running sich check --staged " +
+        "(.sich/notes/hooks/pre-commit, .sich/notes/hooks/pre-merge-commit); fix: sich init\n",
+    );
+    sb.ok(root, "init");
+
+    // A pre-merge-commit hook the user wrote stays as is; init prints its line to add.
+    const custom = "#!/bin/sh\necho custom\n";
+    sb.write(root, ".git/hooks/pre-merge-commit", custom);
+    const asked = sb.ok(root, "init");
+    expect(asked).toContain(
+      `pre-merge-commit hook exists (.git/hooks/pre-merge-commit); add this line to it:\n  ${MERGE_LINE}`,
+    );
+    expect(asked).not.toContain("pre-commit hook");
+    expect(sb.read(root, ".git/hooks/pre-merge-commit")).toBe(custom);
+    expect(sb.sich(root, ["check"]).stderr).toContain("warning: base has no pre-merge-commit hook");
+    // With the line in, it guards merges.
+    sb.write(root, ".git/hooks/pre-merge-commit", `${custom}${MERGE_LINE}\n`);
+    chmodSync(join(root, ".git/hooks/pre-merge-commit"), 0o755);
+    expect(sb.sich(root, ["check"]).stderr).toBe("");
+    sb.write(root, "secret.md", "s\n");
+    sb.ok(root, "claim", "notes", "secret.md");
+    sb.git(root, "switch", "-q", "-c", "leaky");
+    sb.git(root, "add", "-f", "secret.md");
+    sb.git(root, "commit", "-q", "--no-verify", "-m", "leak");
+    sb.git(root, "switch", "-q", "main");
+    const blocked = sb.run(["git", "merge", "--no-ff", "-m", "m", "leaky"], root);
+    expect(blocked.code).not.toBe(0);
+    expect(blocked.stdout + blocked.stderr).toContain("custom");
+    expect(blocked.stdout + blocked.stderr).toContain("back it out with: git merge --abort");
+  });
+
+  test("a merge hook fails closed when sich can't be found", () => {
+    const root = setup("notes");
+    sb.git(root, "switch", "-q", "-c", "side");
+    sb.git(root, "commit", "-q", "--allow-empty", "-m", "side");
+    sb.git(root, "switch", "-q", "main");
+    const env = { PATH: "/usr/bin:/bin", SICH_BIN: "" };
+    const blocked = sb.run(["git", "merge", "--no-ff", "-m", "merge side", "side"], root, env);
+    expect(blocked.code).not.toBe(0);
+    expect(blocked.stderr).toContain("merge blocked: 'sich' not found");
+    expect(blocked.stderr).toContain("skip once: git merge --no-verify");
+    expect(sb.git(root, "log", "--format=%s")).toBe("init\n");
   });
 });
 

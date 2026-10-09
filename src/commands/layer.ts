@@ -15,7 +15,7 @@ import {
 } from "../context";
 import { git, splitZ, type Repo } from "../git";
 import { c, fail, listSome, note, out, plural, warn } from "../ui";
-import { ensureInit, installLayerHook } from "./init";
+import { ensureInit, installLayerHooks } from "./init";
 
 function assertFree(ctx: Ctx, layer: string): void {
   validateLayerName(layer);
@@ -103,7 +103,7 @@ export function cmdNew(ctx: Ctx, args: string[]): number {
   out(`${c.green("created")} layer ${c.bold(layer)}: git data -> .sich/${layer}/, claims list -> ${manifestRel(layer)}`);
   if (url) out(`set origin of ${layer} -> ${url}`);
   // After the initial commit, which has nothing to guard.
-  installLayerHook(ctx, layer);
+  installLayerHooks(ctx, layer);
   note(`next: sich claim ${layer} <path>...  then  sich commit ${layer} -m <msg>${url ? `  and  sich push ${layer}` : ""}`);
   return 0;
 }
@@ -146,6 +146,6 @@ export function cmdAttach(ctx: Ctx, args: string[]): number {
     cleanup();
     throw e;
   }
-  installLayerHook(ctx, layer);
+  installLayerHooks(ctx, layer);
   return 0;
 }

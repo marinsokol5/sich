@@ -21,8 +21,8 @@ pnpm run install:global        # build, pack and install as the global `sich`
 - `pnpm run build` bundles `src/` with Bun into one Node script, `dist/cli.js`
   (~50 KB). Try changes with `node dist/cli.js <command>`; the global `sich`
   stays the installed version.
-- To have the pre-commit hooks use your build for one commit:
-  `SICH_BIN=$PWD/dist/cli.js git commit …`
+- To have the guard hooks (pre-commit, pre-merge-commit) use your build for one
+  commit or merge: `SICH_BIN=$PWD/dist/cli.js git commit …`
 - `pnpm test` rebuilds and runs the suite (with `bun test`) against
   `dist/cli.js`; `pnpm run typecheck` checks types.
 - `pnpm run docs:example` regenerates [docs/example.md](docs/example.md) from a
@@ -60,14 +60,16 @@ Keep them in mind when using sich, and don't break the safeguards when changing 
   files (`node_modules/`, `.DS_Store`) stay ignored. A claimed directory that is
   itself ignored can't be staged as a whole; claim its files individually.
   Likewise a `!name` rule makes `name` visible to every repo, even ones that
-  don't own it; `sich commit` leaves such files out and the pre-commit hooks
-  of base and every layer block them, but `git commit --no-verify` won't.
+  don't own it; `sich commit` leaves such files out and the guard hooks of
+  base and every layer block them (in commits and merge commits), but
+  `git commit --no-verify` won't, and neither will a fast-forward, rebase or
+  cherry-pick, which run no hook (plain `sich check` reports them afterwards).
 - **`main` only.** Layers are created on `main` and sich doesn't manage layer
   branches. (`attach` checks out the remote's default branch.) Branches still
   work through the passthrough, e.g. `sich notes switch -c draft`.
 - **Shared working tree.** Operations that rewrite the working tree in one repo
-  (`checkout`, `reset --hard`, `clean -x`) can affect files owned by another:
-  git treats ignored files, which every other repo's files are, as expendable.
-  `git clean -fdx` (or `git stash --all`) in base would remove every layer's
-  files; don't. `sich pull` checks first and stops rather than overwrite a file
-  the pulled repo doesn't track; plain `git pull` doesn't.
+  (`checkout`, `merge`, `reset --hard`, `clean -x`) can affect files owned by
+  another: git treats ignored files, which every other repo's files are, as
+  expendable. `git clean -fdx` (or `git stash --all`) in base would remove
+  every layer's files; don't. `sich pull` checks first and stops rather than
+  overwrite a file the pulled repo doesn't track; plain `git pull` doesn't.

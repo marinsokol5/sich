@@ -40,7 +40,7 @@ npm install -g git-sich      # the package is git-sich; the command is sich
 cd myproject
 
 # Create an empty .sich folder, exclude it from base (.git/info/exclude)
-# and install the pre-commit guard (every layer gets one too).
+# and install the commit guard hooks (every layer gets them too).
 sich init
 
 # Create a layer (a sietch) called "personal": .sich/personal is a separate
@@ -109,7 +109,7 @@ everyday
   push [repo...]                    push base + all layers (or named)
   sync [repo...]                    pull, then push
   check [--fix] [--staged]          find leaks and ownership problems
-                                    (--staged: what the pre-commit hooks run)
+                                    (--staged: what the commit/merge hooks run)
 
 passthrough
   <layer> <git args...>             run git in a layer, e.g. sich notes log
@@ -121,7 +121,7 @@ options
   -V, --version                     print version
 
 environment
-  SICH_BIN                          sich binary the pre-commit hooks run
+  SICH_BIN                          sich binary the commit/merge hooks run
                                     (default: sich on PATH)
   SICH_GH                           gh binary for new --gh (default: gh)
   NO_COLOR                          disable colors
@@ -163,23 +163,35 @@ the same folder can still belong to different layers.
 Because each layer only "sees" its claims, `git add -A` in a layer is safe, and
 new files created inside a claimed directory automatically belong to that layer.
 
-**Guard.** Base and every layer get a `pre-commit` hook that runs
-`sich check --staged`, since a layer may be public or shared with a different
-audience too. It checks the repo whose index git is committing, so the same
-line also works in a `core.hooksPath` shared by every repo. In base it blocks a
-commit that stages a claimed path or anything under `.sich/` (e.g. after
-`git add -f`; on case-insensitive filesystems under any spelling). In layer `L`
-it blocks a commit that stages a path `L` doesn't own: unclaimed (e.g. after
-`sich L add -f`) or not yet in the claims list being committed, claimed by
+**Guard.** Base and every layer get a `pre-commit` and a `pre-merge-commit`
+hook that run `sich check --staged`, since a layer may be public or shared with
+a different audience too. It checks the repo whose index git is committing, so
+the same lines also work in a `core.hooksPath` shared by every repo. In base it
+blocks a commit that stages a claimed path or anything under `.sich/` (e.g.
+after `git add -f`; on case-insensitive filesystems under any spelling). In
+layer `L` it blocks a commit that stages a path `L` doesn't own: unclaimed (e.g.
+after `sich L add -f`) or not yet in the claims list being committed, claimed by
 another layer, or under `.sich/` (other than `L`'s own claims list). Staged
 deletions never block, so untracking a stray file (`sich L rm --cached -- <path>`)
-can be committed. Every hook also blocks
-while ownership between layers is ambiguous (overlapping claims, a file tracked
-by the wrong layer), since that could leak one layer's files into another.
-Stale exclude rules only warn. Where sich isn't set up (a linked `git worktree`)
-the hooks do nothing. Skip the check once with `git commit --no-verify` (in a
-layer: `sich L commit --no-verify`). `sich check` warns about any repo whose
-hook doesn't run sich; `sich init` installs the missing ones.
+can be committed. Every hook also blocks while ownership between layers is
+ambiguous (overlapping claims, a file tracked by the wrong layer), since that
+could leak one layer's files into another. Stale exclude rules only warn. Where
+sich isn't set up (a linked `git worktree`) the hooks do nothing. Skip the check
+once with `git commit --no-verify` (in a layer: `sich L commit --no-verify`).
+
+**Merges.** Merge commits are guarded too: git runs `pre-merge-commit` for a
+merge commit made without conflicts (`git merge`, `git pull` without
+`--rebase`), and `pre-commit` when you finish a conflicted merge with
+`git commit`. The check covers what the merge brings in, e.g. a stray file
+committed on a branch with `--no-verify`. By then git has already written the
+merge result to the working tree, possibly over another repo's copy of an
+incoming path, so a blocked merge says how to back out (`git merge --abort`)
+and restore that copy afterwards, rather than how to unstage it. Skip the check
+once with `git merge --no-verify` (in a layer: `sich L merge --no-verify`).
+Fast-forward merges, rebase and cherry-pick run no hook at all, so what they
+bring in isn't checked as it arrives; plain `sich check` catches it afterwards.
+`sich check` also warns about any repo whose hooks don't run sich, and
+`sich init` installs the missing ones.
 
 ## FAQ
 

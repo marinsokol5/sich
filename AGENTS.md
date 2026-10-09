@@ -35,11 +35,17 @@ every change has to respect.
 - **Git calls:** always through `src/git.ts`.
 - **Ownership:** manifests are the single source of truth. Exclude blocks are
   generated, never edited by hand. Claims never nest across layers.
-- **Guard:** base and every layer have a pre-commit hook that runs
-  `${SICH_BIN:-sich} check --staged` (it detects the committing repo from
-  `GIT_INDEX_FILE`) and fails closed. It blocks on leaks into base, on a layer
-  committing paths it doesn't own, and on ambiguous ownership between layers,
-  and only warns about stale excludes.
+- **Guard:** base and every layer have a pre-commit and a pre-merge-commit
+  hook (git runs the latter for conflict-free merge commits), running
+  `${SICH_BIN:-sich} check --staged` (pre-merge-commit adds `--merge`; the
+  committing repo is detected from `GIT_INDEX_FILE`, which git sets in both)
+  and failing closed. It blocks on leaks into base, on a layer committing or
+  merging in paths it doesn't own, and on ambiguous ownership between layers,
+  and only warns about stale excludes. A blocked merge prints how to abort and
+  restore overwritten files, never commit hints. Fast-forwards, rebase and
+  cherry-pick run no hook; only plain `sich check` catches what they bring in.
+  Hooks are installed and refreshed by one generic installer (`GUARD_HOOKS` in
+  `src/commands/init.ts`); add any new guard hook there.
 - **Version:** the dev marker is a build-time define (`SICH_DEV`), set by
   `install:global` only.
 - **Messages:** anything that changes a file names it with `-> path`. Errors
