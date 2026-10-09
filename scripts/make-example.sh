@@ -81,13 +81,13 @@ EOF
 
 console "sich init" \
   "sich new personal --remote ~/remotes/myproject-personal.git" \
-  "sich add personal my-notes.md" \
+  "sich claim personal my-notes.md" \
   'sich personal commit -m "adding notes"' \
   "sich push personal"
 
 printf '## 2. A team layer, shared with your team\n\n'
 console "sich new team --remote ~/remotes/myproject-team.git" \
-  "sich add team roadmap.md api-keys.env llm-transcripts/" \
+  "sich claim team roadmap.md api-keys.env llm-transcripts/" \
   "sich status -v"
 printf '`sich commit` commits base and every layer with changes at once (here only\n'
 printf '`team` has any), and `sich push` pushes them all:\n\n'

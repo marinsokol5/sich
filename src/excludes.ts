@@ -12,7 +12,7 @@
 // lines of that dir's children, and dedupes shared parents for free.
 //
 // Finally other layers' claims are appended as plain excludes. Claims can't nest
-// across layers (`add` refuses it, `check` flags it), so this is only a safety net
+// across layers (`claim` refuses it, `check` flags it), so this is only a safety net
 // for manifests that arrive nested anyway (e.g. via pull): last match wins, so
 // another layer's claim inside one of L's directories is carved out of L. Other
 // layers' claims that are an ancestor of (or equal to) one of L's claims are

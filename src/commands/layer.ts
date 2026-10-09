@@ -102,7 +102,7 @@ export function cmdNew(ctx: Ctx, args: string[]): number {
 
   out(`${c.green("created")} layer ${c.bold(layer)}: git data -> .sich/${layer}/, claims list -> ${manifestRel(layer)}`);
   if (url) out(`set origin of ${layer} -> ${url}`);
-  note(`next: sich add ${layer} <path>...  then  sich commit ${layer} -m <msg>${url ? `  and  sich push ${layer}` : ""}`);
+  note(`next: sich claim ${layer} <path>...  then  sich commit ${layer} -m <msg>${url ? `  and  sich push ${layer}` : ""}`);
   return 0;
 }
 

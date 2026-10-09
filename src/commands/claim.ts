@@ -1,4 +1,4 @@
-// sich add / sich rm: changing what a layer claims.
+// sich claim / sich unclaim (aliases: add / rm): changing what a layer claims.
 
 import { parseArgs } from "../args";
 import {
@@ -38,10 +38,10 @@ interface Move {
   dropClaims: Claim[];
 }
 
-export function cmdAdd(ctx: Ctx, args: string[]): number {
+export function cmdClaim(ctx: Ctx, args: string[]): number {
   const p = parseArgs(args, { "--move": "bool" });
   const [layer, ...inputs] = p.positionals;
-  if (!layer || inputs.length === 0) fail("usage: sich add <layer> <path...> [--move]");
+  if (!layer || inputs.length === 0) fail("usage: sich claim <layer> <path...> [--move]");
   const move = p.flags["--move"] === true;
   const repo = requireLayer(ctx, layer);
   const claims = allClaims(ctx);
@@ -83,7 +83,7 @@ export function cmdAdd(ctx: Ctx, args: string[]): number {
       if (outer) {
         fail(
           `${t} is inside ${outer}, claimed by layer ${other}; claims can't nest across layers ` +
-            `(to move all of it: sich add ${layer} ${outer} --move)`,
+            `(to move all of it: sich claim ${layer} ${outer} --move)`,
         );
       }
       // ...while its claims at or inside this path are taken over whole with --move.
@@ -165,10 +165,10 @@ function stage(repo: Repo, claim: Claim): void {
   }
 }
 
-export function cmdRm(ctx: Ctx, args: string[]): number {
+export function cmdUnclaim(ctx: Ctx, args: string[]): number {
   const p = parseArgs(args, {});
   const [layer, ...inputs] = p.positionals;
-  if (!layer || inputs.length === 0) fail("usage: sich rm <layer> <path...>");
+  if (!layer || inputs.length === 0) fail("usage: sich unclaim <layer> <path...>");
   const repo = requireLayer(ctx, layer);
   const file = manifestPath(ctx, layer);
   const man = readManifest(file, layer);

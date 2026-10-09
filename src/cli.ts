@@ -5,8 +5,8 @@ import { realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { version } from "../package.json";
 import { wantsHelp } from "./args";
-import { cmdAdd, cmdRm } from "./commands/add";
 import { cmdCheck } from "./commands/check";
+import { cmdClaim, cmdUnclaim } from "./commands/claim";
 import { cmdCommit } from "./commands/commit";
 import { cmdInit } from "./commands/init";
 import { cmdLs, cmdWhich } from "./commands/inspect";
@@ -34,8 +34,11 @@ const HANDLERS: Record<Exclude<Command, "help">, Handler> = {
   init: cmdInit,
   new: cmdNew,
   attach: cmdAttach,
-  add: cmdAdd,
-  rm: cmdRm,
+  claim: cmdClaim,
+  unclaim: cmdUnclaim,
+  // Undocumented aliases (older name); `sich <layer> add` is git's add, not this.
+  add: cmdClaim,
+  rm: cmdUnclaim,
   which: cmdWhich,
   ls: cmdLs,
   status: cmdStatus,

@@ -20,6 +20,8 @@ export const COMMANDS = [
   "init",
   "new",
   "attach",
+  "claim",
+  "unclaim",
   "add",
   "rm",
   "which",

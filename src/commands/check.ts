@@ -67,7 +67,7 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
   const isSich = (f: string) => fold(f).startsWith(".sich/");
 
   // Claims of different layers must not overlap: same path, or one inside the
-  // other's directory (`add` refuses both; manifests can still arrive via pull).
+  // other's directory (`claim` refuses both; manifests can still arrive via pull).
   const flat = [...claims].flatMap(([layer, cs]) => cs.map((claim) => ({ layer, claim })));
   for (const [i, a] of flat.entries()) {
     for (const b of flat.slice(i + 1)) {
@@ -79,7 +79,7 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
         const [outer, inner] = covers(x, y) ? [a, b] : [b, a];
         problems.push(
           `${inner.claim} (${inner.layer}) is nested inside ${outer.claim} (${outer.layer}); ` +
-            `claims can't nest across layers (fix: sich rm ${inner.layer} ${shellQuote(inner.claim)})`,
+            `claims can't nest across layers (fix: sich unclaim ${inner.layer} ${shellQuote(inner.claim)})`,
         );
       }
     }
@@ -104,7 +104,7 @@ export function cmdCheck(ctx: Ctx, args: string[]): number {
   }
 
   // Staged changes in base touching private paths (what the pre-commit hook enforces).
-  // Deletions are fine: that is how a path moved out of base (add --move) gets committed.
+  // Deletions are fine: that is how a path moved out of base (claim --move) gets committed.
   const reported = new Set<string>();
   if (p.flags["--staged"]) {
     const staged = splitZ(

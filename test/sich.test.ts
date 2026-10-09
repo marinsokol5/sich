@@ -82,7 +82,7 @@ describe("1. init", () => {
     expect(sb.ok(root, "init")).not.toContain("add this line");
     sb.ok(root, "new", "notes");
     sb.write(root, "secret.md", "s\n");
-    sb.ok(root, "add", "notes", "secret.md");
+    sb.ok(root, "claim", "notes", "secret.md");
     sb.git(root, "add", "-f", "secret.md");
     const blocked = sb.run(["git", "commit", "-m", "leak"], root, { PATH: "/usr/bin:/bin" });
     expect(blocked.code).not.toBe(0);
@@ -106,7 +106,7 @@ describe("2. claims hide files from base and show them in the layer", () => {
     sb.write(root, "NOTES.md", "notes\n");
     sb.write(root, "roadmap/q1.md", "q1\n");
     sb.write(root, "src/app.ts", "code\n");
-    sb.ok(root, "add", "notes", "NOTES.md", "roadmap");
+    sb.ok(root, "claim", "notes", "NOTES.md", "roadmap");
 
     expect(sb.read(root, ".sich/notes.paths")).toContain("NOTES.md\nroadmap/\n");
     expect(baseStatus(root)).toEqual(["src/app.ts"]);
@@ -121,7 +121,7 @@ describe("2. claims hide files from base and show them in the layer", () => {
 
     // Paths are taken relative to the current directory.
     sb.write(root, "src/private.md", "p\n");
-    sb.ok(join(root, "src"), "add", "notes", "private.md");
+    sb.ok(join(root, "src"), "claim", "notes", "private.md");
     expect(sb.read(root, ".sich/notes.paths")).toContain("src/private.md\n");
     expect(baseStatus(root)).toEqual(["src/app.ts"]);
   });
@@ -131,13 +131,13 @@ describe("2. claims hide files from base and show them in the layer", () => {
     const manifest = sb.read(root, ".sich/notes.paths");
     for (const name of ["trailing ", " leading", "#hash.md"]) {
       sb.write(root, name, "x\n");
-      expect(sb.bad(root, "add", "notes", name)).toContain("cannot claim");
+      expect(sb.bad(root, "claim", "notes", name)).toContain("cannot claim");
     }
     expect(sb.read(root, ".sich/notes.paths")).toBe(manifest);
     expect(layerStatus(root, "notes")).toEqual([]);
     // Only a leading "#" in the whole path is a problem.
     sb.write(root, "dir/#ok.md", "x\n");
-    sb.ok(root, "add", "notes", "dir/#ok.md");
+    sb.ok(root, "claim", "notes", "dir/#ok.md");
     expect(baseStatus(root)).toHaveLength(3);
     expect(baseStatus(root)).not.toContain("dir/#ok.md");
   });
@@ -145,7 +145,7 @@ describe("2. claims hide files from base and show them in the layer", () => {
   test.if(CASE_INSENSITIVE_FS)("a mistyped case is claimed as spelled on disk", () => {
     const root = setup("notes");
     sb.write(root, "Docs/NOTES.md", "n\n");
-    sb.ok(root, "add", "notes", "docs/notes.md");
+    sb.ok(root, "claim", "notes", "docs/notes.md");
     expect(sb.read(root, ".sich/notes.paths")).toContain("\nDocs/NOTES.md\n");
     expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "Docs/NOTES.md"]);
     expect(baseStatus(root)).toEqual([]);
@@ -156,12 +156,12 @@ describe("3. overlapping claims", () => {
   test("claims sharing parent directories", () => {
     const root = setup("notes");
     for (const f of ["a/x.md", "a/y.md", "a/b/c.md", "a/b/z.md", "a/b/d/e.md", "a/b/d/f.md"]) sb.write(root, f, f);
-    sb.ok(root, "add", "notes", "a/b/c.md", "a/x.md", "a/b/d");
+    sb.ok(root, "claim", "notes", "a/b/c.md", "a/x.md", "a/b/d");
     expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "a/b/c.md", "a/b/d/e.md", "a/b/d/f.md", "a/x.md"]);
     expect(baseStatus(root)).toEqual(["a/b/z.md", "a/y.md"]);
     sb.ok(root, "commit", "notes", "-m", "claims");
     // Claiming a sibling later must not hide earlier ones.
-    sb.ok(root, "add", "notes", "a/y.md");
+    sb.ok(root, "claim", "notes", "a/y.md");
     expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "a/y.md"]);
     expect(baseStatus(root)).toEqual(["a/b/z.md"]);
   });
@@ -171,8 +171,8 @@ describe("3. overlapping claims", () => {
     sb.write(root, "docs/guide.md", "g\n");
     sb.write(root, "docs/api.env", "KEY=1\n");
     sb.write(root, "docs/public.md", "p\n");
-    sb.ok(root, "add", "notes", "docs/guide.md");
-    sb.ok(root, "add", "keys", "docs/api.env");
+    sb.ok(root, "claim", "notes", "docs/guide.md");
+    sb.ok(root, "claim", "keys", "docs/api.env");
     expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "docs/guide.md"]);
     expect(layerStatus(root, "keys")).toEqual([".sich/keys.paths", "docs/api.env"]);
     expect(baseStatus(root)).toEqual(["docs/public.md"]);
@@ -184,9 +184,9 @@ describe("3. overlapping claims", () => {
     const root = setup("notes", "keys");
     sb.write(root, "docs/guide.md", "g\n");
     sb.write(root, "docs/api.env", "KEY=1\n");
-    sb.ok(root, "add", "notes", "docs");
+    sb.ok(root, "claim", "notes", "docs");
     for (const flags of [[], ["--move"]]) {
-      expect(sb.bad(root, "add", "keys", "docs/api.env", ...flags)).toContain(
+      expect(sb.bad(root, "claim", "keys", "docs/api.env", ...flags)).toContain(
         "docs/api.env is inside docs/, claimed by layer notes; claims can't nest across layers",
       );
     }
@@ -198,11 +198,11 @@ describe("3. overlapping claims", () => {
     const root = setup("notes", "keys");
     sb.write(root, "docs/guide.md", "g\n");
     sb.write(root, "docs/api.env", "KEY=1\n");
-    sb.ok(root, "add", "keys", "docs/api.env");
+    sb.ok(root, "claim", "keys", "docs/api.env");
     sb.ok(root, "commit", "keys", "-m", "keys");
-    expect(sb.bad(root, "add", "notes", "docs")).toContain("docs/ contains docs/api.env, claimed by layer keys");
+    expect(sb.bad(root, "claim", "notes", "docs")).toContain("docs/ contains docs/api.env, claimed by layer keys");
 
-    const moved = sb.sich(root, ["add", "notes", "docs", "--move"]);
+    const moved = sb.sich(root, ["claim", "notes", "docs", "--move"]);
     expect(moved.code).toBe(0);
     expect(moved.stderr).toContain(
       "warning: moved docs/ from keys: dropped its 1 claim docs/api.env -> .sich/keys.paths; untracked 1 file there",
@@ -217,10 +217,10 @@ describe("3. overlapping claims", () => {
   test("check flags claims that arrive nested (e.g. via pull)", () => {
     const root = setup("notes", "keys");
     sb.write(root, "docs/guide.md", "g\n");
-    sb.ok(root, "add", "notes", "docs");
+    sb.ok(root, "claim", "notes", "docs");
     sb.write(root, ".sich/keys.paths", "docs/api.env\n");
     expect(sb.bad(root, "check")).toContain(
-      "docs/api.env (keys) is nested inside docs/ (notes); claims can't nest across layers (fix: sich rm keys docs/api.env)",
+      "docs/api.env (keys) is nested inside docs/ (notes); claims can't nest across layers (fix: sich unclaim keys docs/api.env)",
     );
   });
 });
@@ -232,11 +232,11 @@ describe("4. moving paths out of base", () => {
     sb.git(root, "add", "plan.md");
     sb.git(root, "commit", "-q", "-m", "oops");
 
-    const refused = sb.bad(root, "add", "notes", "plan.md");
+    const refused = sb.bad(root, "claim", "notes", "plan.md");
     expect(refused).toContain("tracked by base");
     expect(sb.read(root, ".sich/notes.paths")).not.toContain("plan.md");
 
-    const r = sb.sich(root, ["add", "notes", "plan.md", "--move"]);
+    const r = sb.sich(root, ["claim", "notes", "plan.md", "--move"]);
     expect(r.code).toBe(0);
     expect(r.stderr).toContain("warning");
     expect(r.stderr).toContain("history");
@@ -249,9 +249,9 @@ describe("4. moving paths out of base", () => {
   test("add refuses a path claimed by another layer", () => {
     const root = setup("notes", "keys");
     sb.write(root, "x.md", "x\n");
-    sb.ok(root, "add", "notes", "x.md");
-    expect(sb.bad(root, "add", "keys", "x.md")).toContain("notes");
-    sb.ok(root, "add", "keys", "x.md", "--move");
+    sb.ok(root, "claim", "notes", "x.md");
+    expect(sb.bad(root, "claim", "keys", "x.md")).toContain("notes");
+    sb.ok(root, "claim", "keys", "x.md", "--move");
     expect(sb.read(root, ".sich/notes.paths")).not.toContain("x.md");
     expect(layerFiles(root, "keys")).toContain("x.md");
     expect(layerFiles(root, "notes")).not.toContain("x.md");
@@ -269,7 +269,7 @@ describe("5. gitignored files", () => {
     sb.write(root, "config/node_modules/junk.js", "junk\n");
     expect(sb.ok(root, "which", ".env").trim()).toBe("ignored");
 
-    sb.ok(root, "add", "keys", ".env", "config");
+    sb.ok(root, "claim", "keys", ".env", "config");
     expect(sb.ok(root, "commit", "-m", "secrets")).toContain("keys: committed");
     expect(layerFiles(root, "keys")).toEqual([".env", ".sich/keys.paths", "config/settings.json"]);
     expect(sb.ok(root, "which", ".env").trim()).toBe("keys");
@@ -287,8 +287,8 @@ describe("5. gitignored files", () => {
     sb.git(root, "commit", "-q", "-m", "ignore");
     sb.write(root, "team.local", "notes only\n");
     sb.write(root, "k.env", "K=1\n");
-    sb.ok(root, "add", "notes", "team.local");
-    sb.ok(root, "add", "keys", "k.env");
+    sb.ok(root, "claim", "notes", "team.local");
+    sb.ok(root, "claim", "keys", "k.env");
 
     const r = sb.sich(root, ["commit", "-m", "both"]);
     expect(r.code).toBe(0);
@@ -316,8 +316,8 @@ function published() {
   sb.write(root, "docs/guide.md", "guide\n");
   sb.write(root, "docs/api.env", "KEY=1\n");
   sb.write(root, ".env", "TOKEN=1\n");
-  sb.ok(root, "add", "keys", ".env", "docs/api.env");
-  sb.ok(root, "add", "notes", "NOTES.md", "roadmap", "docs/guide.md");
+  sb.ok(root, "claim", "keys", ".env", "docs/api.env");
+  sb.ok(root, "claim", "notes", "NOTES.md", "roadmap", "docs/guide.md");
   sb.ok(root, "commit", "-m", "private stuff");
   const pushed = sb.ok(root, "push");
   expect(pushed).toContain("push -u origin main");
@@ -375,7 +375,7 @@ describe("6. collaborator flow", () => {
     const remote = sb.bare("notes.git");
     const root = setup("notes");
     sb.write(root, "NOTES.md", "n\n");
-    sb.ok(root, "add", "notes", "NOTES.md");
+    sb.ok(root, "claim", "notes", "NOTES.md");
     sb.ok(root, "commit", "-m", "notes");
     sb.ok(root, "notes", "branch", "-m", "trunk");
     sb.ok(root, "notes", "push", "-q", remote, "trunk");
@@ -414,7 +414,7 @@ describe("7. pull", () => {
 
     sb.write(b, "ideas/one.md", "idea\n");
     sb.write(b, "TODO.md", "todo\n");
-    sb.ok(b, "add", "notes", "ideas", "TODO.md");
+    sb.ok(b, "claim", "notes", "ideas", "TODO.md");
     sb.ok(b, "commit", "notes", "-m", "ideas");
     sb.ok(b, "push", "notes");
 
@@ -441,7 +441,7 @@ describe("7. pull", () => {
 
     // A teammate claims TODO.md; here TODO.md is a local, untracked file.
     sb.write(b, "TODO.md", "theirs\n");
-    sb.ok(b, "add", "notes", "TODO.md");
+    sb.ok(b, "claim", "notes", "TODO.md");
     sb.ok(b, "commit", "notes", "-m", "todo");
     sb.ok(b, "push", "notes");
     sb.write(a, "TODO.md", "mine\n");
@@ -501,7 +501,7 @@ describe("8. check and the pre-commit hook", () => {
   test("check detects conflicts and stale excludes; --fix repairs excludes", () => {
     const root = setup("notes", "keys");
     sb.write(root, "a.md", "a\n");
-    sb.ok(root, "add", "notes", "a.md");
+    sb.ok(root, "claim", "notes", "a.md");
     expect(sb.ok(root, "check")).toContain("ok");
 
     // Same path claimed by two layers (hand-edited manifest).
@@ -534,7 +534,7 @@ describe("8. check and the pre-commit hook", () => {
     const root = setup("notes");
     sb.write(root, "secret.md", "s\n");
     sb.write(root, "public.md", "p\n");
-    sb.ok(root, "add", "notes", "secret.md");
+    sb.ok(root, "claim", "notes", "secret.md");
     sb.ok(root, "commit", "notes", "-m", "secret");
     sb.git(root, "add", "public.md");
     sb.git(root, "commit", "-q", "--no-verify", "-m", "public");
@@ -599,7 +599,7 @@ describe("8. check and the pre-commit hook", () => {
     const root = setup("notes", "team");
     sb.write(root, "public.md", "p\n");
     sb.write(root, "about-teammates.md", "private\n");
-    sb.ok(root, "add", "notes", "about-teammates.md");
+    sb.ok(root, "claim", "notes", "about-teammates.md");
 
     const excl = join(".sich", "notes", "info", "exclude");
     sb.write(root, excl, sb.read(root, excl).replace("!/about-teammates.md\n", ""));
@@ -634,7 +634,7 @@ describe("8. check and the pre-commit hook", () => {
     sb.write(root, "plan.md", "p\n");
     sb.git(root, "add", "plan.md");
     sb.git(root, "commit", "-q", "-m", "plan");
-    sb.ok(root, "add", "notes", "plan.md", "--move");
+    sb.ok(root, "claim", "notes", "plan.md", "--move");
     const PATH = `${sb.sichOnPath()}:${process.env.PATH}`;
     const r = sb.run(["git", "commit", "-q", "-m", "move plan out"], root, { PATH });
     expect(r.stdout + r.stderr).toBe("");
@@ -644,7 +644,7 @@ describe("8. check and the pre-commit hook", () => {
   test("with core.ignorecase the hook catches a claimed path staged under another spelling", () => {
     const root = setup("notes");
     sb.write(root, "Docs/NOTES.md", "n\n");
-    sb.ok(root, "add", "notes", "Docs");
+    sb.ok(root, "claim", "notes", "Docs");
     // What `git add -f docs` can produce on a case-insensitive filesystem.
     const blob = sb.git(root, "hash-object", "-w", "Docs/NOTES.md").trim();
     sb.git(root, "update-index", "--add", "--cacheinfo", `100644,${blob},docs/NOTES.md`);
@@ -667,8 +667,8 @@ describe("8. check and the pre-commit hook", () => {
   });
 });
 
-describe("9. which / ls / rm / passthrough / names / --gh", () => {
-  test("which, ls and rm", () => {
+describe("9. which / ls / unclaim / passthrough / names / --gh", () => {
+  test("which, ls and unclaim", () => {
     const root = setup("notes");
     sb.write(root, ".gitignore", "*.log\n");
     sb.git(root, "add", ".gitignore");
@@ -677,7 +677,7 @@ describe("9. which / ls / rm / passthrough / names / --gh", () => {
     sb.write(root, "roadmap/q1.md", "q\n");
     sb.write(root, "debug.log", "x\n");
     sb.write(root, "loose.txt", "x\n");
-    sb.ok(root, "add", "notes", "NOTES.md", "roadmap");
+    sb.ok(root, "claim", "notes", "NOTES.md", "roadmap");
     sb.ok(root, "commit", "notes", "-m", "notes");
 
     expect(sb.ok(root, "which", "NOTES.md").trim()).toBe("notes");
@@ -693,8 +693,8 @@ describe("9. which / ls / rm / passthrough / names / --gh", () => {
     expect(ls).toContain("    roadmap/q1.md\n");
     expect(sb.bad(root, "ls", "nope")).toContain("no such layer");
 
-    expect(sb.bad(root, "rm", "notes", "roadmap/q1.md")).toContain("inside the claim roadmap/");
-    const rm = sb.ok(root, "rm", "notes", "NOTES.md");
+    expect(sb.bad(root, "unclaim", "notes", "roadmap/q1.md")).toContain("inside the claim roadmap/");
+    const rm = sb.ok(root, "unclaim", "notes", "NOTES.md");
     expect(rm).toContain("untracked in base");
     expect(existsSync(join(root, "NOTES.md"))).toBe(true);
     expect(sb.read(root, ".sich/notes.paths")).not.toContain("NOTES.md");
@@ -703,6 +703,44 @@ describe("9. which / ls / rm / passthrough / names / --gh", () => {
     sb.ok(root, "commit", "notes", "-m", "release");
     expect(layerFiles(root, "notes")).toEqual([".sich/notes.paths", "roadmap/q1.md"]);
     expect(sb.ok(root, "which", "NOTES.md").trim()).toBe("untracked");
+  });
+
+  test("add and rm are aliases of claim and unclaim; <layer> add/rm stay plain git", () => {
+    const root = setup("notes");
+    const help = sb.ok(root, "--help");
+    expect(help).toMatch(/^  claim <layer> <path\.\.\.> \[--move\]/m);
+    expect(help).toMatch(/^  unclaim <layer> <path\.\.\.>/m);
+    expect(help).not.toMatch(/^  (add|rm) /m);
+    expect(sb.ok(root, "add", "--help")).toContain("usage: sich claim");
+    expect(sb.ok(root, "add", "--help")).toContain("Alias: sich add.");
+    expect(sb.ok(root, "help", "rm")).toContain("usage: sich unclaim");
+
+    sb.write(root, "a.md", "a\n");
+    sb.write(root, "b.md", "b\n");
+    // Passthrough is git add: the layer ignores what it hasn't claimed.
+    const gitAdd = sb.sich(root, ["notes", "add", "a.md"]);
+    expect(gitAdd.code).not.toBe(0);
+    expect(gitAdd.stderr).toContain("ignored");
+    expect(sb.read(root, ".sich/notes.paths")).not.toContain("a.md");
+
+    expect(sb.ok(root, "add", "notes", "a.md")).toContain("claimed a.md for notes");
+    expect(sb.ok(root, "claim", "notes", "b.md")).toContain("claimed b.md for notes");
+    expect(sb.read(root, ".sich/notes.paths")).toContain("a.md\nb.md\n");
+    expect(layerStatus(root, "notes")).toEqual([".sich/notes.paths", "a.md", "b.md"]);
+    sb.ok(root, "commit", "notes", "-m", "a and b");
+
+    expect(sb.ok(root, "rm", "notes", "a.md")).toContain("released a.md from notes");
+    expect(sb.ok(root, "unclaim", "notes", "b.md")).toContain("released b.md from notes");
+    expect(existsSync(join(root, "a.md")) && existsSync(join(root, "b.md"))).toBe(true);
+    expect(baseStatus(root)).toEqual(["a.md", "b.md"]);
+    expect(sb.bad(root, "unclaim", "notes", "a.md")).toContain("a.md is not claimed by notes");
+    expect(sb.bad(root, "claim", "notes")).toContain("usage: sich claim");
+
+    // Passthrough rm is git rm, which deletes the file.
+    sb.ok(root, "claim", "notes", "a.md");
+    sb.ok(root, "commit", "notes", "-m", "a again");
+    expect(sb.sich(root, ["notes", "rm", "-q", "a.md"]).code).toBe(0);
+    expect(existsSync(join(root, "a.md"))).toBe(false);
   });
 
   test("passthrough runs git against the layer and returns git's exit code", () => {
@@ -718,7 +756,7 @@ describe("9. which / ls / rm / passthrough / names / --gh", () => {
 
   test("reserved and invalid layer names are rejected", () => {
     const root = setup();
-    for (const name of ["base", "status", "add", "help"]) {
+    for (const name of ["base", "status", "claim", "unclaim", "add", "rm", "help"]) {
       expect(sb.bad(root, "new", name)).toContain("reserved");
     }
     for (const name of ["Notes", "-x", "a/b", "_x", "with space"]) {
@@ -757,7 +795,7 @@ describe("cli basics", () => {
   test("--help, <cmd> --help, --version, -C, uninitialized repo", () => {
     const root = sb.repo("proj");
     expect(sb.ok(root, "--help")).toContain("usage: sich");
-    expect(sb.ok(root, "add", "--help")).toContain("usage: sich add");
+    expect(sb.ok(root, "claim", "--help")).toContain("usage: sich claim");
     expect(sb.ok(root, "--version")).toMatch(/^sich \d+\.\d+\.\d+/);
     expect(sb.bad(root, "status")).toContain("not initialized");
     sb.ok(sb.dir, "-C", "proj", "init");
@@ -784,7 +822,7 @@ describe("cli basics", () => {
     const root = setup("notes");
     sb.write(root, "public.md", "p\n");
     sb.write(root, "NOTES.md", "n\n");
-    sb.ok(root, "add", "notes", "NOTES.md");
+    sb.ok(root, "claim", "notes", "NOTES.md");
     const both = sb.ok(root, "commit", "-m", "both");
     expect(both).toMatch(/^base: committed \w+ \(1 file\): public\.md$/m);
     expect(both).toMatch(/^notes: committed \w+ \(2 files\): \.sich\/notes\.paths, NOTES\.md$/m);
@@ -801,7 +839,7 @@ describe("cli basics", () => {
     const root = setup("notes");
     sb.write(root, "NOTES.md", "n\n");
     sb.write(root, "extra.md", "e\n");
-    sb.ok(root, "add", "notes", "NOTES.md");
+    sb.ok(root, "claim", "notes", "NOTES.md");
     const out = sb.ok(root, "status", "-v");
     expect(out).toMatch(/^base\s+main\s+no upstream\s+1 untracked$/m);
     expect(out).toMatch(/^notes\s+main\s+no upstream\s+2 staged$/m);

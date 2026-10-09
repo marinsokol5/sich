@@ -24,8 +24,8 @@ initialized sich in ~/myproject
 $ sich new personal --remote ~/remotes/myproject-personal.git
 created layer personal: git data -> .sich/personal/, claims list -> .sich/personal.paths
 set origin of personal -> ~/remotes/myproject-personal.git
-next: sich add personal <path>...  then  sich commit personal -m <msg>  and  sich push personal
-$ sich add personal my-notes.md
+next: sich claim personal <path>...  then  sich commit personal -m <msg>  and  sich push personal
+$ sich claim personal my-notes.md
 claimed my-notes.md for personal -> .sich/personal.paths
 hidden from base -> .git/info/exclude
 staged in personal; commit with: sich commit personal -m <msg>
@@ -46,8 +46,8 @@ branch 'main' set up to track 'origin/main'.
 $ sich new team --remote ~/remotes/myproject-team.git
 created layer team: git data -> .sich/team/, claims list -> .sich/team.paths
 set origin of team -> ~/remotes/myproject-team.git
-next: sich add team <path>...  then  sich commit team -m <msg>  and  sich push team
-$ sich add team roadmap.md api-keys.env llm-transcripts/
+next: sich claim team <path>...  then  sich commit team -m <msg>  and  sich push team
+$ sich claim team roadmap.md api-keys.env llm-transcripts/
 claimed roadmap.md, api-keys.env, llm-transcripts/ for team -> .sich/team.paths
 hidden from base -> .git/info/exclude
 staged in team; commit with: sich commit team -m <msg>

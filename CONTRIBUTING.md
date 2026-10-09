@@ -50,7 +50,7 @@ Keep them in mind when using sich, and don't break the safeguards when changing 
   access to a layer sees its files in plain text. Encrypt real secrets with a
   tool like [sops](https://github.com/getsops/sops) or
   [dotenvx](https://dotenvx.com).
-- **History is forever.** Moving a file out of base (`sich add --move`) only
+- **History is forever.** Moving a file out of base (`sich claim --move`) only
   stops tracking it from now on; old versions remain in base's history, and on
   its remote if already pushed. Rewrite history (e.g. `git filter-repo`) and
   rotate any leaked secrets.

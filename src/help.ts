@@ -14,9 +14,9 @@ setup
   attach <layer> <url>              join an existing layer (collaborators)
 
 ownership
-  add <layer> <path...> [--move]    claim files/folders for a layer, stage them
+  claim <layer> <path...> [--move]  claim files/folders for a layer, stage them
                                     (--move: take them from base/another layer)
-  rm <layer> <path...>              release claims; files stay on disk
+  unclaim <layer> <path...>         release claims; files stay on disk
   which <path>                      show who owns a path
   ls [layer]                        list claims and tracked files
 
@@ -71,20 +71,24 @@ empty claims manifest .sich/<layer>.paths and an initial commit.
 Joins an existing layer: fetches <url> and checks out its default branch into
 this working tree. Refuses to overwrite existing files.`,
 
-  add: `usage: sich add <layer> <path...> [--move]
+  claim: `usage: sich claim <layer> <path...> [--move]
 
 Claims paths (files or directories, relative to the current directory) for a
 layer, then stages them and the manifest in that layer (no commit).
 Refuses paths tracked by base or owned by another layer unless --move is given;
 --move untracks them from the previous owner (old versions stay in its history).
 Claims can't nest across layers: a path inside another layer's claimed directory
-is always refused (move the whole directory instead).`,
+is always refused (move the whole directory instead).
+Not the same as 'sich <layer> add', which runs plain git add in the layer.
+Alias: sich add.`,
 
-  rm: `usage: sich rm <layer> <path...>
+  unclaim: `usage: sich unclaim <layer> <path...>
 
 Removes exact claims from a layer and untracks them there. The files stay on
 disk and show up as untracked in base (or, if another layer's directory claim
-contains them, now belong to that layer).`,
+contains them, now belong to that layer).
+Not the same as 'sich <layer> rm', which runs plain git rm (deleting files).
+Alias: sich rm.`,
 
   which: `usage: sich which <path>
 
@@ -137,3 +141,7 @@ Exits 1 if any issue remains.`,
 
   help: `usage: sich help [command]`,
 };
+
+// Undocumented aliases (the commands' older names) share their help.
+COMMAND_HELP.add = COMMAND_HELP.claim!;
+COMMAND_HELP.rm = COMMAND_HELP.unclaim!;

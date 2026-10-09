@@ -50,7 +50,7 @@ sich init
 sich new personal --gh
 
 # The personal layer claims my-notes.md; base now ignores it automatically.
-sich add personal my-notes.md
+sich claim personal my-notes.md
 
 # Commit in the personal repo.
 # (`sich commit -m "..."` commits base + every layer with changes at once.)
@@ -65,7 +65,7 @@ sich push personal
 sich new team --gh
 
 # Claim these for the team layer; base's exclude now hides all three.
-sich add team roadmap.md api-keys.env llm-transcripts/
+sich claim team roadmap.md api-keys.env llm-transcripts/
 
 # A collaborator with sich installed and access to user/myproject-team
 # clones base, then attaches the team layer.
@@ -96,9 +96,9 @@ setup
   attach <layer> <url>              join an existing layer (collaborators)
 
 ownership
-  add <layer> <path...> [--move]    claim files/folders for a layer, stage them
+  claim <layer> <path...> [--move]  claim files/folders for a layer, stage them
                                     (--move: take them from base/another layer)
-  rm <layer> <path...>              release claims; files stay on disk
+  unclaim <layer> <path...>         release claims; files stay on disk
   which <path>                      show who owns a path
   ls [layer]                        list claims and tracked files
 
@@ -187,6 +187,9 @@ That said, sometimes you do want a base commit to pin a submodule version: when 
 **Can't GitHub do per-file permissions?**
 No. Visibility is set per repo, and anyone who can clone a repo gets every file in it.
 Their per-repo access control is great, though, and sich builds on it!
+
+**What's the difference between `sich claim notes x` and `sich notes add x`?**
+`sich claim` gives `x` to the layer: it records the claim in `.sich/notes.paths`, hides `x` from base and the other layers, and stages it. `sich notes add` is plain `git add` run in the layer, which refuses files the layer hasn't claimed. Likewise `sich unclaim` releases a claim and keeps the file on disk, while `sich notes rm` is plain `git rm` and deletes it.
 
 **Is this like git-crypt or sops?**
 No. sich doesn't encrypt anything; it relies on who can access each repo. You can combine the two for real secrets.
