@@ -16,6 +16,9 @@ every change has to respect.
 - `src/excludes.ts`: the generated `info/exclude` blocks.
 - `src/context.ts`: root discovery, layers, ownership helpers.
 - `src/help.ts`: all help text. `src/ui.ts`: output helpers.
+- `extras/sich-github.user.js`: userscript that lists a base's layers
+  (sietches) on its GitHub page. Plain browser JS, not part of the npm
+  package; test it by hand in a browser.
 - `test/sich.test.ts`: integration tests via the `Sandbox` helper in
   `test/helpers.ts`. `test/excludes.test.ts`: unit tests for exclude generation.
 

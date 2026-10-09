@@ -1340,28 +1340,69 @@ describe("9. which / ls / unclaim / passthrough / names / --gh", () => {
     expect(sb.bad(root, "new", "my-notes.v2")).toContain("already exists");
   });
 
-  test("--gh creates a private repo with the (fake) gh CLI and sets origin", () => {
+  test("--gh creates a private repo with the (fake) gh CLI, sets origin and links it to base", () => {
     const root = setup();
     sb.git(root, "remote", "add", "origin", "git@github.com:me/myproj.git");
     const log = sb.path("gh.log");
     const gh = sb.script(
       "fake-gh",
-      `#!/bin/sh\necho "$@" >> "${log}"\nif [ "$2" = view ]; then echo "git@github.com:me/$3.git"; fi\n`,
+      `#!/bin/sh\necho "$@" >> "${log}"\nif [ "$2" = view ]; then echo "me/$3 git@github.com:me/$3.git"; fi\n`,
     );
     const r = sb.sich(root, ["new", "notes", "--gh"], { SICH_GH: gh });
     expect(r.code).toBe(0);
     expect(readFileSync(log, "utf8")).toBe(
-      "repo create myproj-notes --private\nrepo view myproj-notes --json sshUrl -q .sshUrl\n",
+      [
+        "repo create myproj-notes --private",
+        `repo view myproj-notes --json nameWithOwner,sshUrl -q .nameWithOwner + " " + .sshUrl`,
+        "repo edit me/myproj-notes --description Sietch of https://github.com/me/myproj, attach it via " +
+          "sich attach notes git@github.com:me/myproj-notes.git --add-topic sietch",
+        "",
+      ].join("\n"),
     );
+    expect(r.stdout).toContain("linked GitHub repo me/myproj-notes to https://github.com/me/myproj (description, topic sietch)");
     expect(sb.layerGit(root, "notes", "remote", "get-url", "origin").trim()).toBe("git@github.com:me/myproj-notes.git");
 
     const r2 = sb.sich(root, ["new", "keys", "--gh", "custom-name"], { SICH_GH: gh });
     expect(r2.code).toBe(0);
     expect(sb.layerGit(root, "keys", "remote", "get-url", "origin").trim()).toBe("git@github.com:me/custom-name.git");
+    expect(readFileSync(log, "utf8")).toContain("repo edit me/custom-name --description Sietch of https://github.com/me/myproj,");
 
     const failing = sb.script("failing-gh", "#!/bin/sh\nexit 3\n");
     expect(sb.sich(root, ["new", "x", "--gh"], { SICH_GH: failing }).code).toBe(1);
     expect(existsSync(join(root, ".sich/x"))).toBe(false);
+  });
+
+  test("--gh links to base's web page from any origin URL form, and never fails over the link", () => {
+    const root = setup();
+    const log = sb.path("gh.log");
+    const gh = sb.script(
+      "fake-gh",
+      `#!/bin/sh\necho "$@" >> "${log}"\nif [ "$2" = view ]; then echo "me/$3 git@github.com:me/$3.git"; fi\n`,
+    );
+    // No origin: nothing to link to, but the layer is still created.
+    const r = sb.sich(root, ["new", "a", "--gh"], { SICH_GH: gh });
+    expect(r.code).toBe(0);
+    expect(r.stdout + r.stderr).toContain("base has no remote to link to");
+    expect(readFileSync(log, "utf8")).not.toContain("repo edit");
+
+    for (const [origin, layer] of [
+      ["https://user@github.com/me/myproj.git", "b"],
+      ["ssh://git@github.com:22/me/myproj/", "c"],
+    ] as const) {
+      sb.git(root, "config", "remote.origin.url", origin);
+      expect(sb.sich(root, ["new", layer, "--gh"], { SICH_GH: gh }).code).toBe(0);
+      expect(readFileSync(log, "utf8")).toContain(`repo edit me/myproj-${layer} --description Sietch of https://github.com/me/myproj, `);
+    }
+
+    // gh can't edit the repo: a warning, and the layer exists anyway.
+    const noEdit = sb.script(
+      "no-edit-gh",
+      `#!/bin/sh\nif [ "$2" = edit ]; then exit 1; fi\nif [ "$2" = view ]; then echo "me/$3 git@github.com:me/$3.git"; fi\n`,
+    );
+    const r2 = sb.sich(root, ["new", "d", "--gh"], { SICH_GH: noEdit });
+    expect(r2.code).toBe(0);
+    expect(r2.stderr).toContain("could not set the description and topic of GitHub repo me/myproj-d");
+    expect(sb.layerGit(root, "d", "remote", "get-url", "origin").trim()).toBe("git@github.com:me/myproj-d.git");
   });
 });
 

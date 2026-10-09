@@ -70,8 +70,10 @@ empty claims manifest .sich/<layer>.paths and an initial commit, and installs
 its pre-commit and pre-merge-commit hooks (see sich init).
   --remote <url>   set origin
   --gh [name]      create a private GitHub repo with gh (default name:
-                   <base-repo>-<layer>) and set origin to its SSH URL.
-                   The gh binary can be overridden with SICH_GH.`,
+                   <base-repo>-<layer>) and set origin to its SSH URL. The
+                   repo gets the topic sietch and a description linking to
+                   base, so the userscript in extras/ can list it on base's
+                   GitHub page. The gh binary can be overridden with SICH_GH.`,
 
   attach: `usage: sich attach <layer> <url>
 

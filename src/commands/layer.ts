@@ -47,9 +47,12 @@ function remoteUrl(ctx: Ctx, url: string): string {
   return existsSync(local) ? local : url;
 }
 
+const originUrl = (ctx: Ctx) =>
+  git(ctx.base, ["config", "--get", "remote.origin.url"], { allowFail: true }).stdout.trim();
+
 /** Name of the base repo: last segment of origin's URL, else the folder name. */
 function baseRepoName(ctx: Ctx): string {
-  const url = git(ctx.base, ["config", "--get", "remote.origin.url"], { allowFail: true }).stdout.trim();
+  const url = originUrl(ctx);
   if (url) {
     const last = url.replace(/\/+$/, "").replace(/\.git$/, "").split(/[/:]/).pop();
     if (last) return last;
@@ -57,15 +60,45 @@ function baseRepoName(ctx: Ctx): string {
   return basename(ctx.root);
 }
 
-function runGh(args: string[], capture: boolean): string {
-  const bin = process.env.SICH_GH || "gh";
-  const r = spawnSync(bin, args, {
+/** Web page of the base repo, from origin's URL (git@host:path, ssh:// or https://), if it has one. */
+function baseWebUrl(ctx: Ctx): string | undefined {
+  const url = originUrl(ctx);
+  const m =
+    /^[^@/]+@([^:/]+):(.+)$/.exec(url) ?? /^(?:ssh|git|https?):\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/(.+)$/.exec(url);
+  return m ? `https://${m[1]}/${m[2]!.replace(/\/+$/, "").replace(/\.git$/, "")}` : undefined;
+}
+
+const ghBin = () => process.env.SICH_GH || "gh";
+
+function spawnGh(args: string[], capture: boolean) {
+  return spawnSync(ghBin(), args, {
     encoding: "utf8",
     stdio: ["inherit", capture ? "pipe" : "inherit", "inherit"],
   });
-  if (r.error) fail(`cannot run ${bin}: ${r.error.message}`);
-  if (r.status !== 0) fail(`${bin} ${args.join(" ")} failed (exit ${r.status ?? "?"})`);
+}
+
+function runGh(args: string[], capture: boolean): string {
+  const r = spawnGh(args, capture);
+  if (r.error) fail(`cannot run ${ghBin()}: ${r.error.message}`);
+  if (r.status !== 0) fail(`${ghBin()} ${args.join(" ")} failed (exit ${r.status ?? "?"})`);
   return r.stdout?.trim() ?? "";
+}
+
+/**
+ * Marks GitHub repo `repo` as a sietch of base: topic `sietch` and a description linking
+ * to base, which is how extras/sich-github.user.js lists it on base's page. Base itself
+ * stays untouched. Not worth failing `new` over, since the repo already exists.
+ */
+function describeSietch(ctx: Ctx, layer: string, repo: string, url: string): void {
+  const base = baseWebUrl(ctx);
+  if (!base) {
+    note(`base has no remote to link to, so GitHub repo ${repo} gets no description or topic`);
+    return;
+  }
+  const description = `Sietch of ${base}, attach it via sich attach ${layer} ${url}`;
+  const r = spawnGh(["repo", "edit", repo, "--description", description, "--add-topic", "sietch"], false);
+  if (r.error || r.status !== 0) warn(`could not set the description and topic of GitHub repo ${repo}`);
+  else out(`linked GitHub repo ${repo} to ${base} (description, topic sietch)`);
 }
 
 export function cmdNew(ctx: Ctx, args: string[]): number {
@@ -80,11 +113,18 @@ export function cmdNew(ctx: Ctx, args: string[]): number {
   ensureInit(ctx);
 
   let url = remote;
+  let ghRepo: string | undefined;
   if (gh) {
     const name = typeof gh === "string" ? gh : `${baseRepoName(ctx)}-${layer}`;
     runGh(["repo", "create", name, "--private"], false);
-    url = runGh(["repo", "view", name, "--json", "sshUrl", "-q", ".sshUrl"], true);
-    if (!url) fail(`could not read the SSH URL of GitHub repo ${name}`);
+    const view = runGh(
+      ["repo", "view", name, "--json", "nameWithOwner,sshUrl", "-q", '.nameWithOwner + " " + .sshUrl'],
+      true,
+    );
+    const [fullName, sshUrl] = view.split(" ");
+    if (!fullName || !sshUrl) fail(`could not read the SSH URL of GitHub repo ${name}`);
+    ghRepo = fullName;
+    url = sshUrl;
   }
 
   const repo = createGitDir(ctx, layer);
@@ -106,6 +146,7 @@ export function cmdNew(ctx: Ctx, args: string[]): number {
 
   out(`${c.green("created")} layer ${c.bold(layer)}: git data -> .sich/${layer}/, claims list -> ${manifestRel(layer)}`);
   if (url) out(`set origin of ${layer} -> ${url}`);
+  if (ghRepo && url) describeSietch(ctx, layer, ghRepo, url);
   // After the initial commit, which has nothing to guard.
   installLayerHooks(ctx, layer);
   note(`next: sich claim ${layer} <path>...  then  sich commit ${layer} -m <msg>${url ? `  and  sich push ${layer}` : ""}`);

@@ -194,6 +194,25 @@ bring in isn't checked as it arrives; plain `sich check` catches it afterwards.
 `sich check` also warns about any repo whose hooks don't run sich, and
 `sich init` installs the missing ones.
 
+## On GitHub
+
+Base's GitHub page shows no trace of its layers. Instead, `sich new --gh` marks
+the layer's repo as a sietch of base: it gets the topic `sietch` and the
+description `Sietch of https://github.com/<owner>/<base>, attach it via sich attach <layer> <url>`,
+which links back to base and tells collaborators how to join.
+
+To see a base's layers from its own GitHub page, install
+[`extras/sich-github.user.js`](extras/sich-github.user.js) with a userscript
+manager such as Tampermonkey or Violentmonkey (open its
+[raw file](https://raw.githubusercontent.com/marinsokol5/sich/main/extras/sich-github.user.js)
+to install). It adds a **Sietches** section under About on every repo page.
+Nothing is fetched until you click it: then it searches GitHub, as you, for
+repos with the topic `sietch` whose description links to the repo you're
+viewing, so it only finds layers you have access to. The result stays in your
+browser's localStorage until you click refresh. It relies on GitHub's own web
+search with your github.com session (no token), which isn't a public API, so a
+change on GitHub's side can break it.
+
 ## FAQ
 
 **Why not just keep private files gitignored?**
