@@ -39,7 +39,7 @@ export function cmdCommit(ctx: Ctx, args: string[]): number {
       if (named) note(`${repo.name}: nothing to commit`);
       continue;
     }
-    // Base runs its pre-commit hook here; show its full output if it blocks.
+    // Each repo runs its pre-commit hook here; show its full output if it blocks.
     const r = git(repo, ["commit", "-q", "-m", message], { allowFail: true });
     if (r.code !== 0) {
       process.stderr.write(r.stderr + r.stdout);

@@ -35,9 +35,11 @@ every change has to respect.
 - **Git calls:** always through `src/git.ts`.
 - **Ownership:** manifests are the single source of truth. Exclude blocks are
   generated, never edited by hand. Claims never nest across layers.
-- **Guard:** the pre-commit hook runs `${SICH_BIN:-sich} check --staged` and
-  fails closed. It blocks on leaks into base and on ambiguous ownership between
-  layers, and only warns about stale excludes.
+- **Guard:** base and every layer have a pre-commit hook that runs
+  `${SICH_BIN:-sich} check --staged` (it detects the committing repo from
+  `GIT_INDEX_FILE`) and fails closed. It blocks on leaks into base, on a layer
+  committing paths it doesn't own, and on ambiguous ownership between layers,
+  and only warns about stale excludes.
 - **Version:** the dev marker is a build-time define (`SICH_DEV`), set by
   `install:global` only.
 - **Messages:** anything that changes a file names it with `-> path`. Errors

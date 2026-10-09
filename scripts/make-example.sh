@@ -16,7 +16,7 @@ export GIT_COMMITTER_NAME=You GIT_COMMITTER_EMAIL=you@example.com
 export GIT_AUTHOR_DATE=2026-01-01T12:00:00Z GIT_COMMITTER_DATE=2026-01-01T12:00:00Z
 printf '[init]\n\tdefaultBranch = main\n[advice]\n\tdetachedHead = false\n' >"$GIT_CONFIG_GLOBAL"
 
-# `sich` (and the pre-commit hook) run this checkout's build.
+# `sich` (and the pre-commit hooks) run this checkout's build.
 mkdir "$TMP/bin"
 printf '#!/bin/sh\nexec node "%s/dist/cli.js" "$@"\n' "$ROOT" >"$TMP/bin/sich"
 chmod +x "$TMP/bin/sich"
@@ -114,12 +114,17 @@ block .git/info/exclude
 printf 'Each layer ignores everything except its own claims:\n\n'
 block .sich/personal/info/exclude
 block .sich/team/info/exclude
-printf 'The pre-commit hook that guards base:\n\n'
+printf 'The pre-commit hooks that guard base and each layer:\n\n'
 file .git/hooks/pre-commit
+file .sich/personal/hooks/pre-commit
 
 printf '## 5. The guard in action\n\n'
 printf 'Forcing a private file into base gets blocked:\n\n'
 console "git add -f my-notes.md" 'git commit -m "oops"' "git restore --staged my-notes.md"
+printf 'So does forcing a file into a layer that hasn'"'"'t claimed it (`sich personal add`\n'
+printf 'is plain `git add`; `sich claim` is what claims files):\n\n'
+console 'echo "draft" > draft.md' "sich personal add -f draft.md" 'sich personal commit -m "draft"' \
+  "sich personal rm -q --cached -- draft.md"
 
 printf '## 6. A collaborator joins\n\n'
 printf 'A collaborator with access to `myproject-team` (but not `myproject-personal`)\n'

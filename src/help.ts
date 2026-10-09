@@ -8,7 +8,7 @@ usage: sich [-C <dir>] <command> [args]
        sich [-C <dir>] <layer|base> <git args...>
 
 setup
-  init                              set up .sich/, base excludes, commit guard
+  init                              set up .sich/, excludes, commit guards
   new <layer> [--remote <url> | --gh [name]]
                                     create a layer (--gh: private GitHub repo)
   attach <layer> <url>              join an existing layer (collaborators)
@@ -27,7 +27,7 @@ everyday
   push [repo...]                    push base + all layers (or named)
   sync [repo...]                    pull, then push
   check [--fix] [--staged]          find leaks and ownership problems
-                                    (--staged: what the pre-commit hook runs)
+                                    (--staged: what the pre-commit hooks run)
 
 passthrough
   <layer> <git args...>             run git in a layer, e.g. sich notes log
@@ -39,7 +39,7 @@ options
   -V, --version                     print version
 
 environment
-  SICH_BIN                          sich binary the pre-commit hook runs
+  SICH_BIN                          sich binary the pre-commit hooks run
                                     (default: sich on PATH)
   SICH_GH                           gh binary for new --gh (default: gh)
   NO_COLOR                          disable colors
@@ -51,16 +51,19 @@ Claims can't nest across layers.
 export const COMMAND_HELP: Record<string, string> = {
   init: `usage: sich init
 
-Creates .sich/, writes the managed block in the base repo's info/exclude, and
-installs a pre-commit hook that runs 'sich check --staged'. If a pre-commit hook
-already exists or core.hooksPath is set, prints the line to add instead.
-The hook runs $SICH_BIN (default: sich on PATH) and blocks the commit if it
-can't be found. Safe to run again.`,
+Creates .sich/, writes the managed blocks in each repo's info/exclude, and
+installs a pre-commit hook in base and in every layer that runs
+'sich check --staged'. If a pre-commit hook already exists or core.hooksPath
+is set, prints the line to add instead (the same line works in base, in every
+layer and in a core.hooksPath they share). The hooks run $SICH_BIN (default:
+sich on PATH) and block the commit if it can't be found. Safe to run again;
+refreshes hooks sich wrote.`,
 
   new: `usage: sich new <layer> [--remote <url> | --gh [name]]
 
 Creates layer <layer> (.sich/<layer>/ git dir sharing this working tree) with an
-empty claims manifest .sich/<layer>.paths and an initial commit.
+empty claims manifest .sich/<layer>.paths and an initial commit, and installs
+its pre-commit hook (see sich init).
   --remote <url>   set origin
   --gh [name]      create a private GitHub repo with gh (default name:
                    <base-repo>-<layer>) and set origin to its SSH URL.
@@ -69,7 +72,8 @@ empty claims manifest .sich/<layer>.paths and an initial commit.
   attach: `usage: sich attach <layer> <url>
 
 Joins an existing layer: fetches <url> and checks out its default branch into
-this working tree. Refuses to overwrite existing files.`,
+this working tree, and installs its pre-commit hook (see sich init). Refuses to
+overwrite existing files.`,
 
   claim: `usage: sich claim <layer> <path...> [--move]
 
@@ -110,7 +114,8 @@ staged / modified / untracked files.
 Stages everything (git add -A) and commits, in base and every layer with
 changes, or only in the named repos ('base' or layer names). Excludes keep each
 repo to its own files; anything a repo doesn't own (e.g. let in by a '!' rule in
-a .gitignore) is left out with a warning. Base commits run its pre-commit hook.`,
+a .gitignore) is left out with a warning. Each commit runs that repo's
+pre-commit hook.`,
 
   pull: `usage: sich pull [repo...]
 
@@ -128,15 +133,21 @@ git push in base and every layer (or the named repos). Sets the upstream
 
 pull then push, repo by repo. Stops at the first failure.`,
 
-  check: `usage: sich check [--fix] [--staged]
+  check: `usage: sich check [--fix] [--staged [--repo <repo>]]
 
 Reports: paths claimed or tracked by two layers, base tracking claimed paths or
-.sich/, layers tracking files they don't own, and stale exclude blocks.
-  --fix      rewrite stale exclude blocks
-  --staged   also fail if base's index stages claimed paths or .sich/
-             (this is what the pre-commit hook runs; silent when all is well,
-             stale excludes only warn, and a no-op where sich isn't set up,
-             e.g. a linked worktree)
+.sich/, layers tracking files they don't own, and stale exclude blocks. Warns
+about base or layers whose pre-commit hook doesn't run sich (fix: sich init).
+  --fix          rewrite stale exclude blocks
+  --staged       also check the commit in progress (this is what the
+                 pre-commit hooks run). In base, fail if it stages claimed
+                 paths or .sich/. In a layer, fail if it stages a path that
+                 none of its claims cover (in the claims list as committed
+                 too), another layer's, or .sich/. Staged deletions are fine.
+                 The repo is the one whose index git is committing (else
+                 base). Silent when all is well, stale excludes only warn,
+                 and a no-op where sich isn't set up (e.g. a linked worktree)
+  --repo <repo>  with --staged: check this repo ('base' or a layer) instead
 Exits 1 if any issue remains.`,
 
   help: `usage: sich help [command]`,

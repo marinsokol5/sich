@@ -70,9 +70,14 @@ export interface Manifest {
 
 export function readManifest(file: string, layer: string): Manifest {
   if (!existsSync(file)) return { claims: [], comments: [] };
+  return parseManifest(readFileSync(file, "utf8"), layer);
+}
+
+/** Parse a manifest's text (e.g. the version in a layer's index). */
+export function parseManifest(text: string, layer: string): Manifest {
   const claims: Claim[] = [];
   const comments: string[] = [];
-  for (const line of readFileSync(file, "utf8").split("\n")) {
+  for (const line of text.split("\n")) {
     const t = line.trim();
     if (!t) continue;
     if (t.startsWith("#")) {

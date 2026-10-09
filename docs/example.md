@@ -24,6 +24,7 @@ initialized sich in ~/myproject
 $ sich new personal --remote ~/remotes/myproject-personal.git
 created layer personal: git data -> .sich/personal/, claims list -> .sich/personal.paths
 set origin of personal -> ~/remotes/myproject-personal.git
+installed pre-commit hook of personal -> .sich/personal/hooks/pre-commit
 next: sich claim personal <path>...  then  sich commit personal -m <msg>  and  sich push personal
 $ sich claim personal my-notes.md
 claimed my-notes.md for personal -> .sich/personal.paths
@@ -46,6 +47,7 @@ branch 'main' set up to track 'origin/main'.
 $ sich new team --remote ~/remotes/myproject-team.git
 created layer team: git data -> .sich/team/, claims list -> .sich/team.paths
 set origin of team -> ~/remotes/myproject-team.git
+installed pre-commit hook of team -> .sich/team/hooks/pre-commit
 next: sich claim team <path>...  then  sich commit team -m <msg>  and  sich push team
 $ sich claim team roadmap.md api-keys.env llm-transcripts/
 claimed roadmap.md, api-keys.env, llm-transcripts/ for team -> .sich/team.paths
@@ -196,7 +198,7 @@ Each layer ignores everything except its own claims:
 # <<< sich <<<
 ```
 
-The pre-commit hook that guards base:
+The pre-commit hooks that guard base and each layer:
 
 `.git/hooks/pre-commit`
 
@@ -206,6 +208,19 @@ The pre-commit hook that guards base:
 sich="${SICH_BIN:-sich}"
 if ! command -v "$sich" >/dev/null 2>&1; then
   echo "sich: commit blocked: '$sich' not found; put sich on PATH or set SICH_BIN (skip once: git commit --no-verify)" >&2
+  exit 1
+fi
+exec "$sich" check --staged
+```
+
+`.sich/personal/hooks/pre-commit`
+
+```text
+#!/bin/sh
+# Installed by sich for layer personal: stop files personal doesn't own from being committed to it.
+sich="${SICH_BIN:-sich}"
+if ! command -v "$sich" >/dev/null 2>&1; then
+  echo "sich: commit blocked: '$sich' not found; put sich on PATH or set SICH_BIN (skip once: sich personal commit --no-verify)" >&2
   exit 1
 fi
 exec "$sich" check --staged
@@ -224,6 +239,20 @@ sich check: 1 issue found
 $ git restore --staged my-notes.md
 ```
 
+So does forcing a file into a layer that hasn't claimed it (`sich personal add`
+is plain `git add`; `sich claim` is what claims files):
+
+```console
+$ echo "draft" > draft.md
+$ sich personal add -f draft.md
+$ sich personal commit -m "draft"
+✗ personal has a staged change to draft.md, which none of its claims cover
+  claim with: sich claim personal draft.md
+  or untrack with: sich personal rm --cached -- draft.md
+sich check: 1 issue found
+$ sich personal rm -q --cached -- draft.md
+```
+
 ## 6. A collaborator joins
 
 A collaborator with access to `myproject-team` (but not `myproject-personal`)
@@ -237,6 +266,7 @@ excluded .sich/ from base -> .git/info/exclude
 installed pre-commit hook -> .git/hooks/pre-commit
 attached layer team from ~/remotes/myproject-team.git -> .sich/team/ (branch main)
 checked out 4 files: .sich/team.paths, api-keys.env, llm-transcripts/2026-01-01-planning.md, roadmap.md
+installed pre-commit hook of team -> .sich/team/hooks/pre-commit
 $ ls -A
 .git
 .sich

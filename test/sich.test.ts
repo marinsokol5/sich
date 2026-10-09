@@ -1,7 +1,7 @@
 // Integration tests: run the CLI as a subprocess against temp repos with local bare remotes.
 
 import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, readFileSync, renameSync, statSync } from "node:fs";
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import pkg from "../package.json";
 import { CLI, managedBlock, Sandbox, statusPaths } from "./helpers";
@@ -355,6 +355,8 @@ describe("6. collaborator flow", () => {
     expect(layerStatus(clone, "notes")).toEqual([]);
     expect(layerStatus(clone, "keys")).toEqual([]);
     expect(sb.layerGit(clone, "notes", "rev-parse", "--abbrev-ref", "@{u}").trim()).toBe("origin/main");
+    // attach guards the layer like new does.
+    expect(sb.read(clone, ".sich/notes/hooks/pre-commit")).toContain("# Installed by sich for layer notes:");
     expect(sb.ok(clone, "check")).toContain("ok");
     const status = sb.ok(clone, "status");
     expect(status).toMatch(/^base\s+main\s+origin\/main up to date\s+clean$/m);
@@ -627,6 +629,233 @@ describe("8. check and the pre-commit hook", () => {
     expect(sb.ok(root, "init")).toContain("updated pre-commit hook");
     expect(sb.read(root, hookRel)).toContain("SICH_BIN");
     expect(sb.ok(root, "init")).not.toContain("updated pre-commit hook");
+  });
+
+  test("a layer's hook blocks committing a file it doesn't own, staged via the passthrough", () => {
+    const root = setup("personal");
+    expect(sb.read(root, ".sich/personal/hooks/pre-commit")).toContain('exec "$sich" check --staged\n');
+    sb.write(root, "marin.md", "m\n");
+
+    // `sich personal add` is plain git add: refused, since personal hasn't claimed it...
+    expect(sb.sich(root, ["personal", "add", "marin.md"]).code).not.toBe(0);
+    // ...but -f gets it staged anyway, and the layer's hook catches it.
+    expect(sb.sich(root, ["personal", "add", "-f", "marin.md"]).code).toBe(0);
+    const blocked = sb.sich(root, ["personal", "commit", "-m", "notes"]);
+    expect(blocked.code).not.toBe(0);
+    const out = blocked.stdout + blocked.stderr;
+    expect(out).toContain("personal has a staged change to marin.md, which none of its claims cover");
+    expect(out).toContain("claim with: sich claim personal marin.md");
+    expect(out).toContain("or untrack with: sich personal rm --cached -- marin.md");
+    expect(out).not.toContain("personal tracks marin.md"); // reported once
+    expect(sb.layerGit(root, "personal", "log", "--format=%s")).toBe("sich: create layer personal\n");
+
+    // Claiming it is one fix; then the same commit goes through, silently.
+    sb.ok(root, "claim", "personal", "marin.md");
+    const allowed = sb.sich(root, ["personal", "commit", "-q", "-m", "notes"]);
+    expect(allowed.stdout + allowed.stderr).toBe("");
+    expect(allowed.code).toBe(0);
+    expect(sb.layerGit(root, "personal", "show", "--name-only", "--format=", "HEAD")).toBe(
+      ".sich/personal.paths\nmarin.md\n",
+    );
+    expect(sb.ok(root, "check")).toContain("ok");
+  });
+
+  test("a layer's hook blocks other layers' files and .sich/, checks only what is committed", () => {
+    const root = setup("personal", "team");
+    sb.write(root, "team.md", "t\n");
+    sb.write(root, "mine.md", "m\n");
+    sb.ok(root, "claim", "team", "team.md");
+    sb.ok(root, "claim", "personal", "mine.md");
+    sb.ok(root, "commit", "-m", "both");
+
+    sb.layerGit(root, "personal", "add", "-f", "team.md", ".sich/team.paths");
+    const blocked = sb.run(["git", "commit", "-m", "leak"], root, {
+      GIT_DIR: join(root, ".sich/personal"),
+      GIT_WORK_TREE: root,
+    });
+    expect(blocked.code).not.toBe(0);
+    const out = blocked.stdout + blocked.stderr;
+    expect(out).toContain("personal has a staged change to team.md, which is claimed by team");
+    expect(out).toContain("personal has a staged change to .sich/team.paths, which is under .sich/");
+    expect(out).toContain("untrack with: sich personal rm --cached -- .sich/team.paths team.md");
+    expect(out).not.toContain("claim with");
+    expect(out).not.toContain("tracked by more than one layer"); // reported once
+
+    // A partial commit uses a temporary index (GIT_INDEX_FILE): only what is
+    // actually committed counts, so this passes although team.md is still staged.
+    sb.write(root, "mine.md", "m2\n");
+    const partial = sb.sich(root, ["personal", "commit", "-q", "-m", "partial", "--", "mine.md"]);
+    expect(partial.stdout + partial.stderr).toBe("");
+    expect(partial.code).toBe(0);
+    expect(sb.layerGit(root, "personal", "show", "--name-only", "--format=", "HEAD")).toBe("mine.md\n");
+
+    sb.ok(root, "personal", "rm", "-q", "--cached", "--", "team.md", ".sich/team.paths");
+    expect(sb.ok(root, "check")).toContain("ok");
+  });
+
+  test("untracking a file a layer doesn't own (the check fix) can be committed", () => {
+    const root = setup("personal");
+    sb.write(root, "marin.md", "m\n");
+    sb.sich(root, ["personal", "add", "-f", "marin.md"]);
+    // What a layer without the hook (or --no-verify) let through.
+    sb.ok(root, "personal", "commit", "-q", "--no-verify", "-m", "oops");
+    expect(sb.bad(root, "check")).toContain(
+      "personal tracks marin.md but none of its claims cover it (fix: sich personal rm --cached -- marin.md)",
+    );
+    // An unrelated layer commit is blocked while the layer tracks it.
+    expect(sb.sich(root, ["personal", "commit", "--allow-empty", "-m", "x"]).code).not.toBe(0);
+
+    sb.ok(root, "personal", "rm", "--cached", "-q", "--", "marin.md");
+    const fixed = sb.sich(root, ["personal", "commit", "-q", "-m", "untrack marin.md"]);
+    expect(fixed.stdout + fixed.stderr).toBe("");
+    expect(fixed.code).toBe(0);
+    expect(layerFiles(root, "personal")).toEqual([".sich/personal.paths"]);
+    expect(sb.read(root, "marin.md")).toBe("m\n");
+    expect(sb.ok(root, "check")).toContain("ok");
+  });
+
+  test("a layer's hook fails closed when sich can't be found", () => {
+    const root = setup("notes");
+    sb.write(root, "n.md", "n\n");
+    sb.ok(root, "claim", "notes", "n.md");
+    const blocked = sb.sich(root, ["notes", "commit", "-q", "-m", "n"], { PATH: "/usr/bin:/bin", SICH_BIN: "" });
+    expect(blocked.code).not.toBe(0);
+    expect(blocked.stderr).toContain("commit blocked: 'sich' not found");
+    expect(blocked.stderr).toContain("skip once: sich notes commit --no-verify");
+    expect(sb.layerGit(root, "notes", "log", "--format=%s")).toBe("sich: create layer notes\n");
+    expect(sb.bad(root, "check", "--repo", "notes")).toContain("--repo only applies with --staged");
+    expect(sb.bad(root, "check", "--staged", "--repo", "nope")).toContain("no such layer");
+  });
+
+  test("init installs or refreshes hooks in existing layers, leaving user-written hooks alone", () => {
+    const root = setup("notes", "team");
+    const notesHook = ".sich/notes/hooks/pre-commit";
+    const teamHook = ".sich/team/hooks/pre-commit";
+    // A layer created before layers had hooks, and one with an older sich hook.
+    rmSync(join(root, notesHook));
+    sb.write(root, teamHook, "#!/bin/sh\n# Installed by sich for layer team: old version\nexec sich check --staged\n");
+    const out = sb.ok(root, "init");
+    expect(out).toContain("installed pre-commit hook of notes -> .sich/notes/hooks/pre-commit");
+    expect(out).toContain("updated pre-commit hook of team -> .sich/team/hooks/pre-commit");
+    expect(out).not.toContain("pre-commit hook ->"); // base's is current
+    expect(sb.read(root, notesHook)).toContain("# Installed by sich for layer notes:");
+    expect(sb.read(root, teamHook)).toContain("skip once: sich team commit --no-verify");
+    expect(statSync(join(root, notesHook)).mode & 0o111).not.toBe(0);
+    expect(sb.ok(root, "init")).not.toContain("pre-commit hook");
+
+    // A hook the user wrote stays as is; init prints the line to add.
+    const custom = "#!/bin/sh\necho custom\n";
+    sb.write(root, notesHook, custom);
+    const asked = sb.ok(root, "init");
+    const line = '"${SICH_BIN:-sich}" check --staged || exit 1';
+    expect(asked).toContain(`pre-commit hook of notes exists (${notesHook}); add this line to it:\n  ${line}`);
+    expect(asked).not.toContain("of team");
+    expect(sb.read(root, notesHook)).toBe(custom);
+
+    // Once the line is in, init stops asking and the user's hook guards the layer.
+    sb.write(root, notesHook, `${custom}${line}\n`);
+    chmodSync(join(root, notesHook), 0o755);
+    expect(sb.ok(root, "init")).not.toContain("add this line");
+    sb.write(root, "stray.md", "s\n");
+    sb.layerGit(root, "notes", "add", "-f", "stray.md");
+    const blocked = sb.sich(root, ["notes", "commit", "-m", "stray"]);
+    expect(blocked.code).not.toBe(0);
+    expect(blocked.stdout + blocked.stderr).toContain("custom");
+    expect(blocked.stdout + blocked.stderr).toContain("notes has a staged change to stray.md");
+  });
+
+  test("one hook line guards base and every layer, even in a core.hooksPath shared by projects", () => {
+    const line = '"${SICH_BIN:-sich}" check --staged || exit 1';
+    const shared = sb.script("shared-hooks/pre-commit", `#!/bin/sh\n${line}\n`);
+    sb.git(sb.dir, "config", "--global", "core.hooksPath", dirname(shared));
+
+    // The shared hook already runs sich, so init and new leave it be.
+    const a = sb.repo("a");
+    expect(sb.ok(a, "init")).not.toContain("hook");
+    // The layer's initial commit already runs the shared hook, as that layer.
+    expect(sb.ok(a, "new", "notes")).not.toContain("hook");
+    expect(existsSync(join(a, ".git/hooks/pre-commit"))).toBe(false);
+    expect(existsSync(join(a, ".sich/notes/hooks/pre-commit"))).toBe(false);
+    const b = sb.repo("b");
+    sb.ok(b, "init");
+    sb.ok(b, "new", "team"); // a has notes, b doesn't: the hook names no layer
+    expect(sb.sich(a, ["check"]).stderr).not.toContain("no pre-commit hook");
+
+    sb.write(a, "n.md", "n\n");
+    sb.ok(a, "claim", "notes", "n.md");
+    const layerOk = sb.sich(a, ["notes", "commit", "-q", "-m", "n"]);
+    expect(layerOk.stdout + layerOk.stderr).toBe("");
+    expect(layerOk.code).toBe(0);
+
+    // In a layer it checks that layer, however git was pointed at it.
+    sb.write(a, "stray.md", "s\n");
+    sb.layerGit(a, "notes", "add", "-f", "stray.md");
+    const layerBlocked = sb.run(["git", "--git-dir=.sich/notes", "--work-tree=.", "commit", "-m", "stray"], a);
+    expect(layerBlocked.code).not.toBe(0);
+    expect(layerBlocked.stdout + layerBlocked.stderr).toContain("notes has a staged change to stray.md");
+    sb.layerGit(a, "notes", "rm", "-q", "--cached", "stray.md");
+
+    // In base it checks base, in each project.
+    sb.git(a, "add", "-f", "n.md");
+    const baseBlocked = sb.run(["git", "commit", "-m", "leak"], a);
+    expect(baseBlocked.code).not.toBe(0);
+    expect(baseBlocked.stdout + baseBlocked.stderr).toContain("staged change to private path n.md");
+    sb.write(b, "public.md", "p\n");
+    sb.git(b, "add", "public.md");
+    const baseOk = sb.run(["git", "commit", "-q", "-m", "public"], b);
+    expect(baseOk.stdout + baseOk.stderr).toBe("");
+    expect(baseOk.code).toBe(0);
+  });
+
+  test("a layer's hook checks the claims list being committed, not only the one on disk", () => {
+    const root = setup("notes");
+    sb.write(root, "x.md", "x\n");
+    sb.ok(root, "claim", "notes", "x.md");
+    // A partial commit without the claims list would publish x.md unclaimed.
+    const partial = sb.sich(root, ["notes", "commit", "-m", "x", "--", "x.md"]);
+    expect(partial.code).not.toBe(0);
+    const out = partial.stdout + partial.stderr;
+    expect(out).toContain("notes has a staged change to x.md, which .sich/notes.paths as committed doesn't claim");
+    expect(out).toContain("commit .sich/notes.paths along with it");
+    expect(sb.layerGit(root, "notes", "log", "--format=%s")).toBe("sich: create layer notes\n");
+
+    const both = sb.sich(root, ["notes", "commit", "-q", "-m", "x", "--", "x.md", ".sich/notes.paths"]);
+    expect(both.stdout + both.stderr).toBe("");
+    expect(both.code).toBe(0);
+    expect(sb.layerGit(root, "notes", "show", "HEAD:.sich/notes.paths")).toContain("x.md\n");
+  });
+
+  test("the claim hint uses --move for a path base tracks", () => {
+    const root = setup("notes");
+    sb.ok(root, "notes", "add", "-f", "README.md");
+    const blocked = sb.sich(root, ["notes", "commit", "-m", "readme"]);
+    expect(blocked.code).not.toBe(0);
+    const out = blocked.stdout + blocked.stderr;
+    expect(out).toContain("claim with (base tracks README.md): sich claim notes README.md --move");
+    expect(out).not.toContain("claim with: sich claim notes README.md");
+    sb.ok(root, "claim", "notes", "README.md", "--move");
+    expect(sb.sich(root, ["notes", "commit", "-q", "-m", "readme"]).code).toBe(0);
+  });
+
+  test("check warns (without failing) about a repo whose pre-commit hook doesn't run sich", () => {
+    const root = setup("notes");
+    expect(sb.sich(root, ["check"]).stderr).toBe("");
+    rmSync(join(root, ".sich/notes/hooks/pre-commit"));
+    const missing = sb.sich(root, ["check"]);
+    expect(missing.code).toBe(0);
+    expect(missing.stdout).toContain("sich check: ok");
+    expect(missing.stderr).toContain(
+      "warning: notes has no pre-commit hook running sich check --staged (.sich/notes/hooks/pre-commit); fix: sich init",
+    );
+    expect(missing.stderr).not.toContain("base has");
+    sb.write(root, ".git/hooks/pre-commit", "#!/bin/sh\necho custom\n");
+    expect(sb.sich(root, ["check"]).stderr).toContain("warning: base has no pre-commit hook running sich check");
+    // The hook itself stays quiet about it.
+    sb.git(root, "add", "README.md");
+    expect(sb.sich(root, ["check", "--staged"]).stderr).toBe("");
+    sb.ok(root, "init");
+    sb.write(root, ".git/hooks/pre-commit", '#!/bin/sh\necho custom\n"${SICH_BIN:-sich}" check --staged || exit 1\n');
+    expect(sb.sich(root, ["check"]).stderr).toBe("");
   });
 
   test("the hook lets base commit the removal of a moved path", () => {

@@ -40,7 +40,7 @@ npm install -g git-sich      # the package is git-sich; the command is sich
 cd myproject
 
 # Create an empty .sich folder, exclude it from base (.git/info/exclude)
-# and install the pre-commit guard.
+# and install the pre-commit guard (every layer gets one too).
 sich init
 
 # Create a layer (a sietch) called "personal": .sich/personal is a separate
@@ -90,7 +90,7 @@ usage: sich [-C <dir>] <command> [args]
        sich [-C <dir>] <layer|base> <git args...>
 
 setup
-  init                              set up .sich/, base excludes, commit guard
+  init                              set up .sich/, excludes, commit guards
   new <layer> [--remote <url> | --gh [name]]
                                     create a layer (--gh: private GitHub repo)
   attach <layer> <url>              join an existing layer (collaborators)
@@ -109,7 +109,7 @@ everyday
   push [repo...]                    push base + all layers (or named)
   sync [repo...]                    pull, then push
   check [--fix] [--staged]          find leaks and ownership problems
-                                    (--staged: what the pre-commit hook runs)
+                                    (--staged: what the pre-commit hooks run)
 
 passthrough
   <layer> <git args...>             run git in a layer, e.g. sich notes log
@@ -121,7 +121,7 @@ options
   -V, --version                     print version
 
 environment
-  SICH_BIN                          sich binary the pre-commit hook runs
+  SICH_BIN                          sich binary the pre-commit hooks run
                                     (default: sich on PATH)
   SICH_GH                           gh binary for new --gh (default: gh)
   NO_COLOR                          disable colors
@@ -163,13 +163,23 @@ the same folder can still belong to different layers.
 Because each layer only "sees" its claims, `git add -A` in a layer is safe, and
 new files created inside a claimed directory automatically belong to that layer.
 
-**Guard.** The base `pre-commit` hook runs `sich check --staged`. It blocks a
-base commit that stages a claimed path or anything under `.sich/` (e.g. after
-`git add -f`; on case-insensitive filesystems under any spelling), and it blocks
+**Guard.** Base and every layer get a `pre-commit` hook that runs
+`sich check --staged`, since a layer may be public or shared with a different
+audience too. It checks the repo whose index git is committing, so the same
+line also works in a `core.hooksPath` shared by every repo. In base it blocks a
+commit that stages a claimed path or anything under `.sich/` (e.g. after
+`git add -f`; on case-insensitive filesystems under any spelling). In layer `L`
+it blocks a commit that stages a path `L` doesn't own: unclaimed (e.g. after
+`sich L add -f`) or not yet in the claims list being committed, claimed by
+another layer, or under `.sich/` (other than `L`'s own claims list). Staged
+deletions never block, so untracking a stray file (`sich L rm --cached -- <path>`)
+can be committed. Every hook also blocks
 while ownership between layers is ambiguous (overlapping claims, a file tracked
 by the wrong layer), since that could leak one layer's files into another.
 Stale exclude rules only warn. Where sich isn't set up (a linked `git worktree`)
-it does nothing. Skip the check once with `git commit --no-verify`.
+the hooks do nothing. Skip the check once with `git commit --no-verify` (in a
+layer: `sich L commit --no-verify`). `sich check` warns about any repo whose
+hook doesn't run sich; `sich init` installs the missing ones.
 
 ## FAQ
 

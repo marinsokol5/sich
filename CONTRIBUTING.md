@@ -21,7 +21,7 @@ pnpm run install:global        # build, pack and install as the global `sich`
 - `pnpm run build` bundles `src/` with Bun into one Node script, `dist/cli.js`
   (~50 KB). Try changes with `node dist/cli.js <command>`; the global `sich`
   stays the installed version.
-- To have the pre-commit hook use your build for one commit:
+- To have the pre-commit hooks use your build for one commit:
   `SICH_BIN=$PWD/dist/cli.js git commit …`
 - `pnpm test` rebuilds and runs the suite (with `bun test`) against
   `dist/cli.js`; `pnpm run typecheck` checks types.
@@ -60,8 +60,8 @@ Keep them in mind when using sich, and don't break the safeguards when changing 
   files (`node_modules/`, `.DS_Store`) stay ignored. A claimed directory that is
   itself ignored can't be staged as a whole; claim its files individually.
   Likewise a `!name` rule makes `name` visible to every repo, even ones that
-  don't own it; `sich commit` leaves such files out and the base hook blocks
-  them, but plain git in a layer won't.
+  don't own it; `sich commit` leaves such files out and the pre-commit hooks
+  of base and every layer block them, but `git commit --no-verify` won't.
 - **`main` only.** Layers are created on `main` and sich doesn't manage layer
   branches. (`attach` checks out the remote's default branch.) Branches still
   work through the passthrough, e.g. `sich notes switch -c draft`.
