@@ -22,7 +22,8 @@ ownership
   ls [layer]                        list claims and tracked files
 
 everyday (all but check also work in a plain git repo, without init)
-  status [-v] [--fetch]             per repo: branch, ahead/behind, changes
+  status [-v] [--fetch]             per repo: branch, ahead/behind, changes,
+                                    last commit
   commit [repo...] -m <msg>         add -A + commit base + all layers (or named)
   pull [repo...]                    pull --rebase base + all layers (or named)
   push [repo...]                    push base + all layers (or named)
@@ -44,6 +45,8 @@ environment
                                     (default: sich on PATH)
   SICH_GH                           gh binary for new --gh (default: gh)
   NO_COLOR                          disable colors
+  COLUMNS                           width status cuts commit subjects to
+                                    (default: the terminal's)
 
 Layer names match ^[a-z0-9][a-z0-9._-]*$; base and command names are reserved.
 Claims can't nest across layers.
@@ -126,8 +129,9 @@ Lists each layer's claims and tracked files.`,
 
   status: `usage: sich status [-v] [--fetch]
 
-One row per repo (base first): branch, ahead/behind upstream, and counts of
-staged / modified / untracked files.
+One row per repo (base first): branch, ahead/behind upstream, counts of
+staged / modified / untracked files, and the last commit (short hash, subject).
+In a terminal, or with $COLUMNS set, long subjects are cut to fit the width.
   -v, --verbose   list the files
   --fetch         fetch every repo with a remote first`,
 

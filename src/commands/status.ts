@@ -89,6 +89,33 @@ function changes(s: RepoStatus): string {
   return parts.length ? parts.join(", ") : c.dim("clean");
 }
 
+interface Commit {
+  hash: string;
+  subject: string;
+}
+
+/** Short hash and subject of HEAD, like `git log --oneline -1`; null before the first commit. */
+function lastCommit(repo: Repo): Commit | null {
+  const line = git(repo, ["log", "-1", "--format=%h %s"], { allowFail: true }).stdout.trim();
+  if (!line) return null;
+  const [hash, ...subject] = line.split(" ");
+  return { hash: hash!, subject: subject.join(" ") };
+}
+
+/** Columns to fit a row into: $COLUMNS, else the terminal's; 0 (no limit) when piped. */
+function terminalWidth(): number {
+  return Number(process.env.COLUMNS) || (process.stdout.isTTY ? process.stdout.columns : 0) || 0;
+}
+
+/** The commit in `room` columns: the subject is cut with "…" (or dropped), the hash always shows. */
+function fitCommit(commit: Commit | null, room: number): string {
+  if (!commit) return c.dim("no commits");
+  const chars = [...commit.subject];
+  const fits = room - commit.hash.length - 1;
+  const subject = chars.length <= fits ? commit.subject : fits >= 2 ? `${chars.slice(0, fits - 1).join("")}…` : "";
+  return subject ? `${c.dim(commit.hash)} ${subject}` : c.dim(commit.hash);
+}
+
 // Pad by visible width (colors add invisible escape codes).
 const visible = (s: string) => s.replace(/\x1b\[[0-9;]*m/g, "").length;
 const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - visible(s)));
@@ -106,12 +133,14 @@ export function cmdStatus(ctx: Ctx, args: string[]): number {
     }
   }
 
-  const rows = repos.map((r) => ({ repo: r, s: repoStatus(r) }));
+  const rows = repos.map((r) => ({ repo: r, s: repoStatus(r), last: lastCommit(r) }));
   const rendered = rows.map(({ repo, s }) => [c.bold(repo.name), c.cyan(s.branch), tracking(s), changes(s)]);
-  const widths = [0, 1, 2].map((i) => Math.max(...rendered.map((cols) => visible(cols[i]!))));
-  rows.forEach(({ s }, idx) => {
-    const cols = rendered[idx]!;
-    out(cols.map((col, i) => (i < 3 ? pad(col, widths[i]!) : col)).join("  "));
+  const widths = [0, 1, 2, 3].map((i) => Math.max(...rendered.map((cols) => visible(cols[i]!))));
+  const width = terminalWidth();
+  const room = width ? width - widths.reduce((sum, w) => sum + w + 2, 0) : Infinity;
+  rows.forEach(({ s, last }, idx) => {
+    const cols = rendered[idx]!.map((col, i) => pad(col, widths[i]!));
+    out([...cols, fitCommit(last, room)].join("  "));
     if (p.flags["-v"]) for (const f of s.files) out(`    ${f}`);
   });
   return 0;

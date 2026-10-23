@@ -9,8 +9,10 @@ TMP=$(mktemp -d)
 TMP_REAL=$(cd "$TMP" && pwd -P)
 trap 'rm -rf "$TMP"' EXIT
 
-# Deterministic output: isolated git config, fixed identity and dates, no colors.
+# Deterministic output: isolated git config, fixed identity and dates, no colors,
+# no width limit.
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL="$TMP/gitconfig" NO_COLOR=1
+unset COLUMNS
 export GIT_AUTHOR_NAME=You GIT_AUTHOR_EMAIL=you@example.com
 export GIT_COMMITTER_NAME=You GIT_COMMITTER_EMAIL=you@example.com
 export GIT_AUTHOR_DATE=2026-01-01T12:00:00Z GIT_COMMITTER_DATE=2026-01-01T12:00:00Z

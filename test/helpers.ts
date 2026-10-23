@@ -39,7 +39,7 @@ export class Sandbox {
     );
     const env: Record<string, string> = {};
     for (const [k, v] of Object.entries(process.env)) {
-      if (v !== undefined && !k.startsWith("GIT_") && !k.startsWith("SICH_")) env[k] = v;
+      if (v !== undefined && !k.startsWith("GIT_") && !k.startsWith("SICH_") && k !== "COLUMNS") env[k] = v;
     }
     this.env = { ...env, GIT_CONFIG_GLOBAL: gitconfig, GIT_CONFIG_NOSYSTEM: "1", NO_COLOR: "1" };
     // The pre-commit hook fails closed, so plain `git commit` in base needs a reachable sich.

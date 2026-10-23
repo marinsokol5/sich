@@ -57,9 +57,9 @@ claimed roadmap.md, api-keys.env, llm-transcripts/ for team -> .sich/team.paths
 hidden from base -> .git/info/exclude
 staged in team; commit with: sich commit team -m <msg>
 $ sich status -v
-base      main  origin/main up to date  clean
-personal  main  origin/main up to date  clean
-team      main  no upstream             4 staged
+base      main  origin/main up to date  clean     59119d4 initial commit
+personal  main  origin/main up to date  clean     b3cea39 adding notes
+team      main  no upstream             4 staged  5867a9e sich: create layer team
     M  .sich/team.paths
     A  api-keys.env
     A  llm-transcripts/2026-01-01-planning.md
@@ -297,8 +297,8 @@ llm-transcripts
 roadmap.md
 src
 $ sich status
-base  main  origin/main up to date  clean
-team  main  origin/main up to date  clean
+base  main  origin/main up to date  clean  59119d4 initial commit
+team  main  origin/main up to date  clean  29aead6 adding team files
 ```
 
 They get `roadmap.md`, `api-keys.env` and `llm-transcripts/`, but `my-notes.md`

@@ -366,8 +366,8 @@ describe("6. collaborator flow", () => {
     expect(sb.read(clone, ".sich/notes/hooks/pre-commit")).toContain("# Installed by sich for layer notes:");
     expect(sb.ok(clone, "check")).toContain("ok");
     const status = sb.ok(clone, "status");
-    expect(status).toMatch(/^base\s+main\s+origin\/main up to date\s+clean$/m);
-    expect(status).toMatch(/^notes\s+main\s+origin\/main up to date\s+clean$/m);
+    expect(status).toMatch(/^base\s+main\s+origin\/main up to date\s+clean\s+\w+ /m);
+    expect(status).toMatch(/^notes\s+main\s+origin\/main up to date\s+clean\s+\w+ /m);
   });
 
   test("attach refuses to overwrite existing files", () => {
@@ -483,10 +483,10 @@ describe("7. pull", () => {
     sb.ok(b, "commit", "-m", "edit");
     sb.ok(b, "push", "notes");
 
-    expect(sb.ok(a, "status")).toMatch(/^notes\s+main\s+origin\/main up to date\s+clean$/m);
+    expect(sb.ok(a, "status")).toMatch(/^notes\s+main\s+origin\/main up to date\s+clean\s+\w+ /m);
     const fetched = sb.ok(a, "status", "--fetch");
-    expect(fetched).toMatch(/^notes\s+main\s+origin\/main behind 1\s+clean$/m);
-    expect(fetched).toMatch(/^base\s+main\s+origin\/main up to date\s+clean$/m);
+    expect(fetched).toMatch(/^notes\s+main\s+origin\/main behind 1\s+clean\s+\w+ /m);
+    expect(fetched).toMatch(/^base\s+main\s+origin\/main up to date\s+clean\s+\w+ /m);
 
     sb.layerGit(a, "keys", "remote", "set-url", "origin", sb.path("gone.git"));
     const warned = sb.sich(a, ["status", "--fetch"]);
@@ -1621,7 +1621,7 @@ describe("cli basics", () => {
     sb.ok(root, "pull");
     expect(sb.read(root, "b.md")).toBe("b\n");
     sb.ok(root, "sync");
-    expect(sb.ok(root, "status")).toMatch(/^base\s+main\s+origin\/main up to date\s+clean$/m);
+    expect(sb.ok(root, "status")).toMatch(/^base\s+main\s+origin\/main up to date\s+clean\s+\w+ /m);
 
     // None of sich's setup appears: no .sich/, no guard hooks, no exclude block.
     expect(existsSync(join(root, ".sich"))).toBe(false);
@@ -1665,9 +1665,32 @@ describe("cli basics", () => {
     sb.write(root, "extra.md", "e\n");
     sb.ok(root, "claim", "notes", "NOTES.md");
     const out = sb.ok(root, "status", "-v");
-    expect(out).toMatch(/^base\s+main\s+no upstream\s+1 untracked$/m);
-    expect(out).toMatch(/^notes\s+main\s+no upstream\s+2 staged$/m);
+    expect(out).toMatch(/^base\s+main\s+no upstream\s+1 untracked\s+\w+ /m);
+    expect(out).toMatch(/^notes\s+main\s+no upstream\s+2 staged\s+\w+ /m);
     expect(out).toContain("    A  NOTES.md");
     expect(out).toContain("    ?? extra.md");
+  });
+
+  test("status shows each repo's last commit, or that it has none", () => {
+    const root = setup("notes");
+    sb.write(root, "NOTES.md", "n\n");
+    sb.ok(root, "claim", "notes", "NOTES.md");
+    sb.ok(root, "commit", "notes", "-m", "Add the notes, long enough to be cut short");
+    const out = sb.ok(root, "status");
+    const row = (repo: string) => out.split("\n").find((l) => l.startsWith(`${repo} `)) ?? "";
+    const last = (log: string) => `  ${log.trim()}`;
+    expect(row("base")).toEndWith(last(sb.git(root, "log", "-1", "--format=%h %s")));
+    expect(row("notes")).toEndWith(last(sb.layerGit(root, "notes", "log", "-1", "--format=%h %s")));
+    expect(row("notes")).toMatch(/\sclean\s+\w+ Add the notes, long enough to be cut short$/);
+
+    // Fit to the terminal ($COLUMNS here): the subject is cut, the hash always shows.
+    const fit = (columns: string) => sb.sich(root, ["status"], { COLUMNS: columns }).stdout.split("\n").filter(Boolean);
+    for (const line of fit("60")) expect(line.length).toBeLessThanOrEqual(60);
+    expect(fit("60").find((l) => l.startsWith("notes "))).toMatch(/\sclean\s+\w+ Add the notes, \S*…$/);
+    expect(fit("20").find((l) => l.startsWith("notes "))).toMatch(/\sclean\s+\w+$/);
+
+    const empty = sb.path("empty");
+    sb.git(sb.dir, "init", "-q", empty);
+    expect(sb.ok(empty, "status")).toMatch(/^base\s+main\s+no upstream\s+clean\s+no commits$/m);
   });
 });
