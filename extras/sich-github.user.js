@@ -347,8 +347,8 @@ tr[data-sich-row] .sich-from span { overflow: hidden; text-overflow: ellipsis; }
     return row;
   }
 
-  /** Which rows are in the table now: redone when the folder, the saved check or GitHub's table changes. */
-  let shown = { stamp: "", table: null, count: 0 };
+  /** Which rows are in the table now: redone when the folder, the saved check, or GitHub's table or rows change. */
+  let shown = { stamp: "", table: null, names: "", count: 0 };
 
   /** Adds the sietches' files and folders in the current folder to base's file table. */
   function ensureRows() {
@@ -366,12 +366,14 @@ tr[data-sich-row] .sich-from span { overflow: hidden; text-overflow: ellipsis; }
     const stamp = entry ? `${repo}:${dir}:${entry.checkedAt}:${filesVersion}` : "";
     const ours = [...document.querySelectorAll("tr[data-sich-row]")];
     const intact = ours.every((r) => r.dataset.sichRow === stamp && table?.contains(r));
-    if (stamp === shown.stamp && table === shown.table && ours.length === shown.count && intact) return;
+    // GitHub may add or change its rows without touching ours: placement and duplicates depend on them.
+    const base = entry ? baseRows(table) : [];
+    const names = base.map((b) => b.name).join("/");
+    if (stamp === shown.stamp && table === shown.table && names === shown.names && ours.length === shown.count && intact) return;
 
     ours.forEach((r) => r.remove());
-    shown = { stamp, table, count: 0 };
+    shown = { stamp, table, names, count: 0 };
     if (!stamp) return;
-    const base = baseRows(table);
     if (!base.length) {
       shown.stamp = ""; // GitHub hasn't filled the table yet: try again on the next change
       return;
