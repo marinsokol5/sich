@@ -1595,13 +1595,39 @@ describe("cli basics", () => {
     expect(sb.ok(root, "--help")).toContain("usage: sich");
     expect(sb.ok(root, "claim", "--help")).toContain("usage: sich claim");
     expect(sb.ok(root, "--version")).toMatch(/^sich \d+\.\d+\.\d+/);
-    expect(sb.bad(root, "status")).toContain("not initialized");
+    expect(sb.bad(root, "ls")).toContain("not initialized");
     sb.ok(sb.dir, "-C", "proj", "init");
     expect(sb.ok(sb.dir, "-C", root, "status")).toMatch(/^base\s+main/m);
     expect(sb.bad(sb.dir, "status")).toContain("not inside a git repository");
     expect(sb.bad(root, "status", "--bogus")).toContain("unknown option");
     expect(sb.bad(root, "commit")).toContain("usage");
     expect(sb.bad(root, "commit", "nope", "-m", "x")).toContain("no such layer");
+  });
+
+  test("status / commit / pull / push / sync work in a plain git repo, as base alone", () => {
+    const remote = sb.bare("proj.git");
+    const root = sb.repo("proj");
+    sb.git(root, "remote", "add", "origin", remote);
+    sb.write(root, "a.md", "a\n");
+    expect(sb.ok(root, "commit", "-m", "a")).toMatch(/^base: committed \w+ \(1 file\): a\.md$/m);
+    expect(sb.ok(root, "push")).toContain("push -u origin main");
+
+    sb.git(sb.dir, "clone", "-q", remote, "other");
+    const other = sb.path("other");
+    sb.write(other, "b.md", "b\n");
+    sb.git(other, "add", "b.md");
+    sb.git(other, "commit", "-q", "-m", "b");
+    sb.git(other, "push", "-q");
+    sb.ok(root, "pull");
+    expect(sb.read(root, "b.md")).toBe("b\n");
+    sb.ok(root, "sync");
+    expect(sb.ok(root, "status")).toMatch(/^base\s+main\s+origin\/main up to date\s+clean$/m);
+
+    // None of sich's setup appears: no .sich/, no guard hooks, no exclude block.
+    expect(existsSync(join(root, ".sich"))).toBe(false);
+    expect(existsSync(join(root, ".git/hooks/pre-commit"))).toBe(false);
+    expect(readFileSync(join(root, ".git/info/exclude"), "utf8")).not.toContain("sich");
+    expect(sb.bad(root, "ls")).toContain("not initialized");
   });
 
   test("--version is plain by default and -dev for a SICH_DEV=true build", () => {

@@ -21,7 +21,7 @@ ownership
   which <path>                      show who owns a path
   ls [layer]                        list claims and tracked files
 
-everyday
+everyday (all but check also work in a plain git repo, without init)
   status [-v] [--fetch]             per repo: branch, ahead/behind, changes
   commit [repo...] -m <msg>         add -A + commit base + all layers (or named)
   pull [repo...]                    pull --rebase base + all layers (or named)

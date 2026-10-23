@@ -51,10 +51,11 @@ const HANDLERS: Record<Exclude<Command, "help">, Handler> = {
 };
 
 /**
- * Commands that handle a missing `sich init` themselves: init/new/attach set it up,
- * and `check --staged` (the hook) has nothing to guard there.
+ * Commands that run without `sich init`: init/new/attach set it up, `check --staged`
+ * (the hook) has nothing to guard there, and the everyday ones treat a plain git
+ * repo as base alone, so the same commands work in every repo.
  */
-const SELF_INIT = new Set<string>(["init", "new", "attach", "check"]);
+const SELF_INIT = new Set<string>(["init", "new", "attach", "check", "status", "commit", "pull", "push", "sync"]);
 
 function changeDir(cwd: string, dir: string): string {
   const target = resolve(cwd, dir);
