@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sich: sietches on GitHub
 // @namespace    https://github.com/marinsokol5/sich
-// @version      0.2.1
+// @version      0.3.0
 // @description  Shows the sich layers of a GitHub repo you can access: in its sidebar, and their files in its file list.
 // @match        https://github.com/*
 // @grant        none
@@ -15,12 +15,13 @@
 // whose description links to https://github.com/<owner>/<repo> (`sich new --gh` sets
 // both). Base itself carries no trace of its layers, so this script asks GitHub's own
 // search, as you (with your github.com session), and only ever finds repos you can access.
-// It never checks on its own: you click to check, and the result stays in localStorage
-// until you click refresh.
+// It never searches on its own: you click to check, and the sietches it found stay in
+// localStorage until you click refresh.
 //
-// A check also saves every file path of each sietch (the list GitHub's "Go to file"
-// uses), so base's "Folders and files" table can show the sietches' files and folders
-// next to its own, in every folder, linking to them in the sietch.
+// Once a repo has saved sietches, every folder page you open fetches each sietch's
+// current file paths (the list GitHub's "Go to file" uses), so base's "Folders and
+// files" table shows the sietches' files and folders next to its own, linking to them
+// in the sietch.
 
 (() => {
   "use strict";
@@ -60,9 +61,15 @@ tr[data-sich-row] .sich-from { display: inline-flex; align-items: center; gap: 4
 tr[data-sich-row] .sich-from svg { flex: none; width: 12px; height: 12px; }
 tr[data-sich-row] .sich-from span { overflow: hidden; text-overflow: ellipsis; }`;
 
-  /** Repos being checked, and the last failure per repo; kept here so a re-rendered section still shows them. */
+  /** Repos being checked, and the last failures per repo; kept here so a re-rendered section still shows them. */
   const checking = new Set();
   const failures = new Map();
+  const fileFailures = new Map();
+
+  /** Each sietch's file paths (lowercase owner/repo -> paths) as last fetched, for this page load only. */
+  const files = new Map();
+  let filesFor = ""; // the page and check they were last fetched for
+  let filesVersion = 0; // bumped when a fetch lands, so the rows are redone
 
   /** owner/repo of the current page, from its URL. */
   function currentRepo() {
@@ -151,7 +158,7 @@ tr[data-sich-row] .sich-from span { overflow: hidden; text-overflow: ellipsis; }
 
   /** Every file path in `repo`'s default branch, from the list behind GitHub's "Go to file". */
   async function listFiles(repo) {
-    // GitHub lets browsers cache this for a day (it's meant for a commit id), so a refresh would get the old list.
+    // GitHub lets browsers cache this for a day (it's meant for a commit id), so it would come back stale.
     const res = await fetch(`/${repo}/tree-list/HEAD`, { headers: { Accept: "application/json" }, cache: "no-store" });
     if (res.status === 404) return []; // nothing pushed yet
     if (!res.ok) throw new Error(res.status === 429 ? RATE_LIMITED : `GitHub answered ${res.status} for ${repo}'s files`);
@@ -166,15 +173,28 @@ tr[data-sich-row] .sich-from span { overflow: hidden; text-overflow: ellipsis; }
     failures.delete(repo);
     repaint(repo);
     try {
-      const sietches = await findSietches(repo);
-      for (const s of sietches) s.paths = await listFiles(s.repo);
-      save(repo, { checkedAt: Date.now(), sietches });
+      save(repo, { checkedAt: Date.now(), sietches: await findSietches(repo) });
     } catch (e) {
       failures.set(repo, e instanceof Error ? e.message : String(e));
     } finally {
       checking.delete(repo);
       repaint(repo);
     }
+  }
+
+  /** Fetches the current paths of every saved sietch of `repo`; one that fails keeps what it had. */
+  async function loadFiles(repo, entry) {
+    const results = await Promise.allSettled(entry.sietches.map((s) => listFiles(s.repo)));
+    const failed = [];
+    results.forEach((r, i) => {
+      if (r.status === "fulfilled") files.set(entry.sietches[i].repo.toLowerCase(), r.value);
+      else failed.push(r.reason instanceof Error ? r.reason.message : String(r.reason));
+    });
+    if (failed.length) fileFailures.set(repo, failed[0]);
+    else fileFailures.delete(repo);
+    filesVersion++;
+    repaint(repo);
+    ensureRows();
   }
 
   function el(tag, props = {}, ...children) {
@@ -230,6 +250,8 @@ tr[data-sich-row] .sich-from span { overflow: hidden; text-overflow: ellipsis; }
     const body = section.querySelector(".sich-body");
     body.replaceChildren();
     if (failure) body.append(el("div", { className: "sich-error", textContent: `Couldn't check: ${failure}` }));
+    const fileFailure = fileFailures.get(repo);
+    if (fileFailure) body.append(el("div", { className: "sich-error", textContent: `Couldn't load files: ${fileFailure}` }));
     if (!entry) {
       if (busy) body.append(el("div", { className: "sich-note", textContent: "Checking…" }));
       else {
@@ -282,7 +304,7 @@ tr[data-sich-row] .sich-from span { overflow: hidden; text-overflow: ellipsis; }
     const entries = [];
     for (const sietch of entry.sietches) {
       const names = new Map(); // name -> is a folder
-      for (const path of sietch.paths ?? []) {
+      for (const path of files.get(sietch.repo.toLowerCase()) ?? []) {
         if (!path.startsWith(prefix) || path.startsWith(".sich/")) continue;
         const [name, ...rest] = path.slice(prefix.length).split("/");
         names.set(name, names.get(name) || rest.length > 0);
@@ -333,8 +355,15 @@ tr[data-sich-row] .sich-from span { overflow: hidden; text-overflow: ellipsis; }
     const repo = currentRepo();
     const dir = currentDir();
     const table = repo && dir !== null ? filesTable() : null;
+    // Fresh paths on every folder page opened and after every check, not on GitHub's re-renders.
+    const visit = repo ? `${location.pathname}:${load(repo)?.checkedAt ?? ""}` : "";
+    if (visit !== filesFor) {
+      filesFor = visit;
+      const saved = dir !== null ? load(repo) : null;
+      if (saved?.sietches.length) loadFiles(repo, saved);
+    }
     const entry = table ? load(repo) : null;
-    const stamp = entry ? `${repo}:${dir}:${entry.checkedAt}` : "";
+    const stamp = entry ? `${repo}:${dir}:${entry.checkedAt}:${filesVersion}` : "";
     const ours = [...document.querySelectorAll("tr[data-sich-row]")];
     const intact = ours.every((r) => r.dataset.sichRow === stamp && table?.contains(r));
     if (stamp === shown.stamp && table === shown.table && ours.length === shown.count && intact) return;

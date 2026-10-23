@@ -208,11 +208,11 @@ manager such as Tampermonkey or Violentmonkey (open its
 to install). It adds a **Sietches** section under About on every repo page.
 Nothing is fetched until you click it: then it searches GitHub, as you, for
 repos with the topic `sietch` whose description links to the repo you're
-viewing, so it only finds layers you have access to. The same click saves the
-list of every file in each layer, so base's file list then shows the layers'
-files and folders next to its own, in every folder, marked with the layer they
-belong to and linking to them there. All of it stays in your browser's
-localStorage until you click refresh. It relies on GitHub's own web search and
+viewing, so it only finds layers you have access to. That list of layers stays
+in your browser's localStorage until you click refresh. Once a repo has layers,
+every folder of it you open fetches their current file lists, so base's file
+list shows the layers' files and folders next to its own, marked with the layer
+they belong to and linking to them there. It relies on GitHub's own web search and
 file list with your github.com session (no token), which aren't public APIs, so
 a change on GitHub's side can break it.
 
