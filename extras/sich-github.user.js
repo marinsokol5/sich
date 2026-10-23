@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         sich: sietches on GitHub
 // @namespace    https://github.com/marinsokol5/sich
-// @version      0.2.0
+// @version      0.2.1
 // @description  Shows the sich layers of a GitHub repo you can access: in its sidebar, and their files in its file list.
 // @match        https://github.com/*
 // @grant        none
@@ -151,7 +151,8 @@ tr[data-sich-row] .sich-from span { overflow: hidden; text-overflow: ellipsis; }
 
   /** Every file path in `repo`'s default branch, from the list behind GitHub's "Go to file". */
   async function listFiles(repo) {
-    const res = await fetch(`/${repo}/tree-list/HEAD`, { headers: { Accept: "application/json" } });
+    // GitHub lets browsers cache this for a day (it's meant for a commit id), so a refresh would get the old list.
+    const res = await fetch(`/${repo}/tree-list/HEAD`, { headers: { Accept: "application/json" }, cache: "no-store" });
     if (res.status === 404) return []; // nothing pushed yet
     if (!res.ok) throw new Error(res.status === 429 ? RATE_LIMITED : `GitHub answered ${res.status} for ${repo}'s files`);
     const paths = (await res.json().catch(() => null))?.paths;
